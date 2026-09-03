@@ -1,0 +1,23 @@
+{
+  "name": "product-id-structure",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Product ID category tree with realtime collaboration and Google Sheets export",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "seed:demo": "node scripts/seedDemo.js",
+    "seed:bulk": "node scripts/seedBulk.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "ws": "^8.18.0",
+    "googleapis": "^140.0.1",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
