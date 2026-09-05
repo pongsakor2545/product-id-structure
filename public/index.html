@@ -1060,13 +1060,7 @@
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'pencil-size') { state.pencilSize = Number(e.target.value); render(); }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'text-size') { state.textSize = Number(e.target.value); render(); }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') state.renameDraft = e.target.value;
-    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input') {
-      myName = e.target.value;
-      var nameSelStart = e.target.selectionStart, nameSelEnd = e.target.selectionEnd;
-      render();
-      var nameInput = app.querySelector('[data-act="my-name-input"]');
-      if (nameInput) { nameInput.focus(); if (typeof nameSelStart === 'number' && nameInput.setSelectionRange) { try { nameInput.setSelectionRange(nameSelStart, nameSelEnd); } catch (er) {} } }
-    }
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input') myName = e.target.value;
   });
 
   app.addEventListener('blur', function (e) {
@@ -1076,6 +1070,7 @@
 
   app.addEventListener('keydown', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input' && e.key === 'Enter') e.target.blur();
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input' && e.key === 'Enter') e.target.blur();
   });
   app.addEventListener('focusout', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') commitRenameSheet();
