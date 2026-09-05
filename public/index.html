@@ -347,8 +347,8 @@
       render();
     });
   }
-  function addSheet() { api('POST', '/api/sheets', { name: 'ชีทใหม่ ' + (state.sheets.length + 1) }).then(function (s) { switchSheet(s.id); }); }
-  function duplicateSheet(id) { api('POST', '/api/sheets/' + id + '/duplicate').then(function (s) { state.contextMenuSheetId = null; switchSheet(s.id); }); }
+  function addSheet() { api('POST', '/api/sheets', { name: 'ชีทใหม่ ' + (state.sheets.length + 1) }).then(function (s) { state.sheets.push(s); switchSheet(s.id); }); }
+  function duplicateSheet(id) { api('POST', '/api/sheets/' + id + '/duplicate').then(function (s) { state.sheets.push(s); state.contextMenuSheetId = null; switchSheet(s.id); }); }
   function deleteSheet(id) {
     if (state.sheets.length <= 1) return;
     api('DELETE', '/api/sheets/' + id).then(function () {
