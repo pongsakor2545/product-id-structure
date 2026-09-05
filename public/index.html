@@ -381,6 +381,14 @@
     (function walk(ids) { ids.forEach(function (id) { var n = nodesById.get(id); if (n && n.childCount > 0) { n.collapsed = value; api('PATCH', '/api/nodes/' + id, { collapsed: value }).catch(function () {}); } if (n && n.childrenLoaded) walk(n.childrenIds); }); })(state.rootIds);
     render();
   }
+  // The tree/mindmap position of every card can shift once a node gains its
+  // first child (the auto-layout re-packs around it), and render() keeps
+  // whatever scroll position was already there -- so a newly added card can
+  // land outside the visible area, looking like the click did nothing.
+  function scrollNodeIntoView(id) {
+    var el = app.querySelector('[data-row-id="' + id + '"], [data-card-id="' + id + '"]');
+    if (el) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
   function addChild(parentId) {
     // Shown immediately (optimistic) rather than waiting on the round-trip,
     // then swapped for the server's real node once it responds -- or rolled
@@ -396,12 +404,14 @@
     attachToParent(tempId, parentId);
     state.selectedId = tempId;
     render();
+    scrollNodeIntoView(tempId);
     api('POST', '/api/sheets/' + state.activeSheetId + '/nodes', { parentId: parentId, name: 'New Category' }).then(function (node) {
       removeFromCache(tempId);
       nodesById.set(node.id, toCacheNode(node, parentId));
       attachToParent(node.id, parentId);
       if (state.selectedId === tempId) state.selectedId = node.id;
       render();
+      scrollNodeIntoView(node.id);
     }).catch(function () {
       removeFromCache(tempId);
       if (state.selectedId === tempId) state.selectedId = null;
