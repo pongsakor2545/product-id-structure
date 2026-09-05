@@ -270,6 +270,13 @@
   };
 
   // ---------- node cache ----------
+  // Position among siblings (1-based) -- used as the fallback avatar number
+  // when a category has no image, instead of the name's first letter.
+  function siblingIndexOf(node) {
+    var siblings = node.parentId ? (nodesById.get(node.parentId) || {}).childrenIds : state.rootIds;
+    var idx = siblings ? siblings.indexOf(node.id) : -1;
+    return idx === -1 ? 1 : idx + 1;
+  }
   function toCacheNode(server, parentId) {
     return { id: server.id, name: server.name, translation: server.translation, definition: server.definition,
       level: server.level, collapsed: !!server.collapsed, imageUrl: server.imageUrl || null, childCount: server.childCount || 0,
@@ -836,7 +843,7 @@
     var chevron = row.hasChildren
       ? '<button class="chevron-btn" data-act="toggle-collapse" data-id="' + node.id + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(' + (node.collapsed ? '0deg' : '90deg') + ')"><path d="M9 6l6 6-6 6"/></svg></button>'
       : '<div class="chevron-spacer"></div>';
-    var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + esc(initialOf(node.name)) + '</div>';
+    var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
     var childCount = row.hasChildren ? '<span class="child-count">' + node.childCount + '</span>' : '';
     var rowStyle = node.id === state.selectedId ? 'background:var(--primary-tint);' : (node.id === state.dragOverId ? 'background:var(--success-tint);outline:1.5px dashed var(--success-line);outline-offset:-2px;' : '');
     if (node.id === state.draggingId) rowStyle += 'opacity:0.4;';
@@ -905,7 +912,7 @@
     if (node.id === state.selectedId) cls += ' selected';
     if (node.id === state.dragOverId) cls += ' dragover';
     if (node.id === state.draggingId) cls += ' dragging';
-    var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + esc(initialOf(node.name)) + '</div>';
+    var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
     var thaiText = (node.translation && node.translation.trim()) ? esc(node.translation) : '<span style="opacity:.45;font-style:italic;">—</span>';
     var pill = node.childCount > 0 ? '<div class="mind-toggle-pill" data-act="toggle-collapse" data-id="' + node.id + '">' + node.childCount + '</div>' : '';
     return '<div class="' + cls + '" draggable="true" data-drag-id="' + node.id + '" data-card-id="' + node.id + '" data-act="select-node" data-id="' + node.id + '" style="left:' + node._px + 'px;top:' + (node._py - cardH / 2) + 'px;">' +
@@ -952,7 +959,7 @@
     if (!node) return '';
     var colors = colorForLevel(node.level);
     var hasImage = !!imageSrc(node);
-    var imageBlock = hasImage ? '<img class="image-preview" src="' + esc(imageSrc(node)) + '" />' : '<div class="image-fallback" style="background:' + colors.solid + '">' + esc(initialOf(node.name)) + '</div>';
+    var imageBlock = hasImage ? '<img class="image-preview" src="' + esc(imageSrc(node)) + '" />' : '<div class="image-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
     return '<div class="panel"><div class="panel-header"><div class="breadcrumb">' + esc(breadcrumbFor(node.id)) + '</div><button class="icon-btn" data-act="close-panel"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' +
       '<div class="panel-body">' +
       '<div class="field"><label>ชื่อหมวดหมู่ (English)</label><input class="name-input" type="text" value="' + esc(node.name) + '" data-field="name" /></div>' +
