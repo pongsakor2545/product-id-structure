@@ -119,8 +119,10 @@
   .mindmap-wrap { cursor: grab; user-select: none; }
   .mindmap-wrap:active { cursor: grabbing; }
   .tree-tip { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 9px 13px; margin-bottom: 18px; }
-  .legend { display: flex; gap: 14px; margin-bottom: 16px; flex-wrap: wrap; }
-  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+  .legend { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-faint); background: var(--surface); border: 1.5px solid var(--border); border-radius: 999px; padding: 5px 12px 5px 9px; cursor: pointer; transition: opacity .12s ease, border-color .12s ease; opacity: 0.55; }
+  .legend-item:hover { opacity: 0.85; }
+  .legend-item.active { color: var(--text); border-color: var(--border-strong); opacity: 1; box-shadow: var(--shadow-sm); }
   .legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 
   .tree { display: flex; flex-direction: column; }
@@ -258,7 +260,7 @@
   var state = {
     sheets: [], activeSheetId: null, rootIds: [],
     selectedId: null, draggingId: null, dragOverId: null,
-    viewMode: 'tree', zoom: 1,
+    viewMode: 'tree', zoom: 1, hiddenLevels: new Set(),
     tool: 'pointer', pencilColor: '#1d1d1f', pencilSize: 3, textColor: '#1d1d1f', textSize: 16,
     drawings: [], texts: [],
     peers: [], wsConnected: false, peopleOpen: false,
@@ -277,6 +279,7 @@
     var idx = siblings ? siblings.indexOf(node.id) : -1;
     return idx === -1 ? 1 : idx + 1;
   }
+  function isLevelVisible(level) { return !state.hiddenLevels.has(level); }
   function toCacheNode(server, parentId) {
     return { id: server.id, name: server.name, translation: server.translation, definition: server.definition,
       level: server.level, collapsed: !!server.collapsed, imageUrl: server.imageUrl || null, childCount: server.childCount || 0,
@@ -383,10 +386,6 @@
     node.collapsed = !node.collapsed;
     render();
     api('PATCH', '/api/nodes/' + id, { collapsed: node.collapsed }).catch(function () {});
-  }
-  function setAllCollapsed(value) {
-    (function walk(ids) { ids.forEach(function (id) { var n = nodesById.get(id); if (n && n.childCount > 0) { n.collapsed = value; api('PATCH', '/api/nodes/' + id, { collapsed: value }).catch(function () {}); } if (n && n.childrenLoaded) walk(n.childrenIds); }); })(state.rootIds);
-    render();
   }
   // The tree/mindmap position of every card can shift once a node gains its
   // first child (the auto-layout re-packs around it), and render() keeps
@@ -828,7 +827,7 @@
       var node = nodesById.get(id); if (!node) return;
       var isLast = idx === ids.length - 1;
       var hasChildren = node.childCount > 0;
-      rows.push({ node: node, depth: depth, isLast: isLast, hasChildren: hasChildren, ancestorLines: ancestorLines.slice() });
+      if (isLevelVisible(node.level)) rows.push({ node: node, depth: depth, isLast: isLast, hasChildren: hasChildren, ancestorLines: ancestorLines.slice() });
       if (hasChildren && !node.collapsed) {
         if (!node.childrenLoaded) { ensureChildrenLoaded(id); }
         else rows = rows.concat(flattenRows(node.childrenIds, depth + 1, ancestorLines.concat(!isLast)));
@@ -865,7 +864,10 @@
     nodesById.forEach(function (n) { if (n.level > maxLevel) maxLevel = n.level; });
     var items = [];
     for (var lvl = 1; lvl <= maxLevel; lvl++) items.push(lvl);
-    return '<div class="legend">' + items.map(function (lvl) { return '<div class="legend-item"><span class="legend-dot" style="background:' + colorForLevel(lvl).solid + '"></span>Level ' + lvl + '</div>'; }).join('') + '</div>';
+    return '<div class="legend">' + items.map(function (lvl) {
+      var on = isLevelVisible(lvl);
+      return '<button class="legend-item' + (on ? ' active' : '') + '" data-act="toggle-level-filter" data-level="' + lvl + '"><span class="legend-dot" style="background:' + colorForLevel(lvl).solid + '"></span>Level ' + lvl + '</button>';
+    }).join('') + '</div>';
   }
   function renderTreeView() {
     var rows = flattenRows(state.rootIds, 0, []);
@@ -875,33 +877,40 @@
   function computeMindLayout(rootIds) {
     var LEVEL_GAP = 258, ROW_H = 92, CARD_H = 56, CARD_W = 212, PAD = 40;
     var cursor = { v: PAD };
-    (function place(ids, depth) {
+    // A hidden level shouldn't leave a horizontal gap or a dangling
+    // connector -- visDepth only advances on a visible node, so a visible
+    // node's indent reflects its visible ancestors, not its raw tree depth.
+    (function place(ids, parentVisDepth) {
       ids.forEach(function (id) {
         var node = nodesById.get(id); if (!node) return;
+        var visDepth = isLevelVisible(node.level) ? parentVisDepth + 1 : parentVisDepth;
         var expanded = node.childCount > 0 && !node.collapsed;
         if (expanded && !node.childrenLoaded) ensureChildrenLoaded(id);
         var kids = (expanded && node.childrenLoaded) ? node.childrenIds : [];
-        if (!kids.length) { node._px = PAD + depth * LEVEL_GAP; node._py = cursor.v; cursor.v += ROW_H; }
+        if (!kids.length) { node._px = PAD + visDepth * LEVEL_GAP; node._py = cursor.v; cursor.v += ROW_H; }
         else {
-          place(kids, depth + 1);
+          place(kids, visDepth);
           var first = nodesById.get(kids[0]), last = nodesById.get(kids[kids.length - 1]);
-          node._px = PAD + depth * LEVEL_GAP; node._py = (first._py + last._py) / 2;
+          node._px = PAD + visDepth * LEVEL_GAP; node._py = (first._py + last._py) / 2;
         }
       });
-    })(rootIds, 0);
+    })(rootIds, -1);
     var mindNodes = [], edges = [], maxX = 0, maxY = 0;
-    (function collect(ids, parent) {
+    (function collect(ids, visibleParent) {
       ids.forEach(function (id) {
         var node = nodesById.get(id); if (!node) return;
-        mindNodes.push(node);
-        maxX = Math.max(maxX, node._px + CARD_W); maxY = Math.max(maxY, node._py + ROW_H / 2);
-        if (parent) {
-          var px = parent._px + CARD_W, py = parent._py, cx = node._px, cy = node._py, midX = (px + cx) / 2;
-          edges.push({ path: 'M ' + px + ' ' + py + ' C ' + midX + ' ' + py + ', ' + midX + ' ' + cy + ', ' + cx + ' ' + cy, stroke: colorForLevel(node.level).solid });
+        var visible = isLevelVisible(node.level);
+        if (visible) {
+          mindNodes.push(node);
+          maxX = Math.max(maxX, node._px + CARD_W); maxY = Math.max(maxY, node._py + ROW_H / 2);
+          if (visibleParent) {
+            var px = visibleParent._px + CARD_W, py = visibleParent._py, cx = node._px, cy = node._py, midX = (px + cx) / 2;
+            edges.push({ path: 'M ' + px + ' ' + py + ' C ' + midX + ' ' + py + ', ' + midX + ' ' + cy + ', ' + cx + ' ' + cy, stroke: colorForLevel(node.level).solid });
+          }
         }
         var expanded = node.childCount > 0 && !node.collapsed;
         var kids = (expanded && node.childrenLoaded) ? node.childrenIds : [];
-        if (kids.length) collect(kids, node);
+        if (kids.length) collect(kids, visible ? node : visibleParent);
       });
     })(rootIds, null);
     return { mindNodes: mindNodes, edges: edges, width: maxX + PAD, height: maxY + PAD, CARD_H: CARD_H };
@@ -1014,8 +1023,6 @@
       '<button class="view-toggle-btn' + (state.viewMode === 'tree' ? ' active' : '') + '" data-act="set-view" data-view="tree"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>มุมมองรายการ</button>' +
       '<button class="view-toggle-btn' + (state.viewMode === 'mind' ? ' active' : '') + '" data-act="set-view" data-view="mind"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="12" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.2 11.3L15.8 6.7M7.4 12h8.2M7.2 12.7l8.6 4.6"/></svg>มุมมองผัง</button></div>' +
       '<div class="topbar-right">' +
-      '<button class="btn btn-ghost small" data-act="expand-all">ขยายทั้งหมด</button>' +
-      '<button class="btn btn-ghost small" data-act="collapse-all">ย่อทั้งหมด</button>' +
       '<button class="btn" data-act="download-excel" title="ดาวน์โหลด Excel ของกิ่งที่โหลดอยู่"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>ดาวน์โหลด Excel</button>' +
       '<button class="btn btn-primary" data-act="add-root"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>เพิ่มหมวดหมู่หลัก</button>' +
       '<div class="people-anchor"><div class="avatar-stack" data-act="toggle-people" title="ดูรายชื่อผู้ใช้งานออนไลน์">' + avatarsHtml + '</div>' + (state.peopleOpen ? renderPeoplePopover(others) : '') + '</div>' +
@@ -1152,8 +1159,12 @@
       case 'add-child': addChild(id); break;
       case 'delete-node': deleteNode(id); break;
       case 'set-view': state.viewMode = el.getAttribute('data-view'); render(); break;
-      case 'expand-all': setAllCollapsed(false); break;
-      case 'collapse-all': setAllCollapsed(true); break;
+      case 'toggle-level-filter': {
+        var lvl = Number(el.getAttribute('data-level'));
+        if (state.hiddenLevels.has(lvl)) state.hiddenLevels.delete(lvl); else state.hiddenLevels.add(lvl);
+        render();
+        break;
+      }
       case 'download-excel': downloadCurrentViewAsExcel(); break;
       case 'add-root': addChild(null); break;
       case 'toggle-share': state.shareOpen = !state.shareOpen; render(); break;
