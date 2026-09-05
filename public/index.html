@@ -1057,8 +1057,16 @@
     }
     var textId = e.target.getAttribute && e.target.getAttribute('data-text-id');
     if (textId) { var t = state.texts.find(function (x) { return x.id === textId; }); if (t) { t.content = e.target.innerHTML; clearTimeout(patchTimers[textId]); patchTimers[textId] = setTimeout(function () { api('PATCH', '/api/texts/' + textId, { content: t.content }).catch(function () {}); }, 500); } return; }
-    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'pencil-size') { state.pencilSize = Number(e.target.value); render(); }
-    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'text-size') { state.textSize = Number(e.target.value); render(); }
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'pencil-size') {
+      state.pencilSize = Number(e.target.value);
+      var pencilLabel = e.target.parentNode && e.target.parentNode.querySelector('.draw-size-label');
+      if (pencilLabel) pencilLabel.textContent = state.pencilSize + 'px';
+    }
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'text-size') {
+      state.textSize = Number(e.target.value);
+      var textLabel = e.target.parentNode && e.target.parentNode.querySelector('.draw-size-label');
+      if (textLabel) textLabel.textContent = state.textSize + 'px';
+    }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') state.renameDraft = e.target.value;
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input') myName = e.target.value;
   });
