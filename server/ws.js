@@ -18,7 +18,7 @@ function attach(server) {
       if (msg.type === 'join') {
         leaveRoom(ws);
         ws.sheetId = msg.sheetId;
-        ws.presence = { name: msg.name || 'Guest', color: msg.color || '#888' };
+        ws.presence = { name: msg.name || 'Guest', color: msg.color || '#888', clientId: msg.clientId || null };
         if (!rooms.has(ws.sheetId)) rooms.set(ws.sheetId, new Set());
         rooms.get(ws.sheetId).add(ws);
         broadcastPresence(ws.sheetId);

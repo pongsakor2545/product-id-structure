@@ -79,10 +79,18 @@
   .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 7px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; }
   .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 
-  .avatar-stack { display: flex; align-items: center; }
+  .people-anchor { position: relative; }
+  .avatar-stack { display: flex; align-items: center; cursor: pointer; }
   .avatar { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: white; border: 2px solid var(--surface); margin-left: -8px; font-family: 'Sora', sans-serif; }
   .avatar:first-child { margin-left: 0; }
   .avatar.more { background: var(--surface-2); color: var(--text-muted); border: 2px solid var(--surface); }
+  .people-popover { position: absolute; top: 42px; right: 0; width: 260px; padding: 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 35; }
+  .people-row { display: flex; align-items: center; gap: 9px; padding: 6px 2px; }
+  .people-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .people-name { flex: 1; font-size: 13px; }
+  .people-name-input { flex: 1; height: 28px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-2); padding: 0 8px; font-size: 12.5px; color: var(--text); }
+  .people-you-tag { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+  .people-empty { font-size: 12.5px; color: var(--text-muted); padding: 6px 2px; }
   .conn-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 5px; }
   .conn-dot.on { background: var(--success-line); }
   .conn-dot.off { background: var(--danger); }
@@ -222,8 +230,14 @@
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 
   var myClientId = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
-  var myName = 'Guest ' + Math.floor(100 + Math.random() * 900);
+  var myName = (function () { try { return localStorage.getItem('pid-my-name') || ''; } catch (e) { return ''; } })() || ('Guest ' + Math.floor(100 + Math.random() * 900));
   var myColor = DRAW_PALETTE[Math.floor(Math.random() * DRAW_PALETTE.length)];
+  function setMyName(name) {
+    myName = (name || '').trim() || ('Guest ' + Math.floor(100 + Math.random() * 900));
+    try { localStorage.setItem('pid-my-name', myName); } catch (e) {}
+    if (state.activeSheetId) wsSend({ type: 'presence', patch: { name: myName } });
+    render();
+  }
 
   function api(method, url, body) {
     var opts = { method: method, headers: { 'X-Client-Id': myClientId } };
@@ -246,7 +260,7 @@
     viewMode: 'tree', zoom: 1,
     tool: 'pointer', pencilColor: '#1d1d1f', pencilSize: 3, textColor: '#1d1d1f', textSize: 16,
     drawings: [], texts: [],
-    peers: [], wsConnected: false,
+    peers: [], wsConnected: false, peopleOpen: false,
     shareOpen: false, copied: false,
     renamingSheetId: null, renameDraft: '',
     contextMenuSheetId: null, contextMenuX: 0,
@@ -320,7 +334,7 @@
   function switchSheet(id) {
     state.activeSheetId = id; state.selectedId = null; state.draggingId = null; state.dragOverId = null;
     state.rootIds = [];
-    wsSend({ type: 'join', sheetId: id, name: myName, color: myColor });
+    wsSend({ type: 'join', sheetId: id, name: myName, color: myColor, clientId: myClientId });
     render();
     return Promise.all([
       api('GET', '/api/sheets/' + id + '/nodes?parent=root'),
@@ -608,7 +622,7 @@
     socket = new WebSocket(proto + '//' + location.host + '/ws');
     socket.onopen = function () {
       state.wsConnected = true; render();
-      if (state.activeSheetId) wsSend({ type: 'join', sheetId: state.activeSheetId, name: myName, color: myColor });
+      if (state.activeSheetId) wsSend({ type: 'join', sheetId: state.activeSheetId, name: myName, color: myColor, clientId: myClientId });
     };
     socket.onclose = function () { state.wsConnected = false; render(); setTimeout(connectWs, 2000); };
     socket.onerror = function () {};
@@ -938,14 +952,22 @@
     return '<div class="ctx-overlay" data-act="close-anno-ctx"></div><div class="ctx-menu" style="left:' + state.annoCtx.x + 'px;top:' + state.annoCtx.y + 'px;">' +
       '<button class="ctx-item danger" data-act="anno-delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m2 0-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7"/></svg>ลบ' + label + '</button></div>';
   }
+  function renderPeoplePopover(others) {
+    var body = '<div class="people-row"><span class="people-dot" style="background:' + esc(myColor) + '"></span><input class="people-name-input" type="text" maxlength="30" value="' + esc(myName) + '" data-act="my-name-input" placeholder="ชื่อของคุณ" /><span class="people-you-tag">คุณ</span></div>';
+    body += others.length
+      ? others.map(function (p) { return '<div class="people-row"><span class="people-dot" style="background:' + esc(p.color || '#888') + '"></span><span class="people-name">' + esc(p.name || 'Guest') + '</span></div>'; }).join('')
+      : '<div class="people-empty">ยังไม่มีคนอื่นออนไลน์</div>';
+    return '<div class="people-popover"><div class="share-title">ผู้ใช้งานออนไลน์ (' + (others.length + 1) + ')</div>' + body + '</div>';
+  }
 
   function renderApp() {
     var prevScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
     var prevScrollLeft = prevScrollEl ? prevScrollEl.scrollLeft : 0;
     var prevScrollTop = prevScrollEl ? prevScrollEl.scrollTop : 0;
-    var peers = state.peers || [];
-    var avatarsHtml = peers.slice(0, 4).map(function (p) { return '<div class="avatar" style="background:' + esc(p.color || '#888') + '" title="' + esc(p.name || 'Guest') + '">' + esc(initialOf(p.name)) + '</div>'; }).join('') + (peers.length > 4 ? '<div class="avatar more">+' + (peers.length - 4) + '</div>' : '');
-    var onlineCount = peers.length + 1;
+    var others = (state.peers || []).filter(function (p) { return p.clientId !== myClientId; });
+    var stackPeople = [{ color: myColor, name: myName }].concat(others);
+    var avatarsHtml = stackPeople.slice(0, 4).map(function (p) { return '<div class="avatar" style="background:' + esc(p.color || '#888') + '" title="' + esc(p.name || 'Guest') + '">' + esc(initialOf(p.name)) + '</div>'; }).join('') + (stackPeople.length > 4 ? '<div class="avatar more">+' + (stackPeople.length - 4) + '</div>' : '');
+    var onlineCount = others.length + 1;
     var html = '<div class="topbar">' +
       '<div class="brand"><div class="brand-title">โครงสร้าง Product ID</div><div class="brand-sub"><span class="conn-dot ' + (state.wsConnected ? 'on' : 'off') + '"></span>' + (state.wsConnected ? onlineCount + ' คนออนไลน์' : 'ขาดการเชื่อมต่อ กำลังลองใหม่...') + '</div></div>' +
       '<div class="view-toggle">' +
@@ -956,7 +978,7 @@
       '<button class="btn btn-ghost small" data-act="collapse-all">ย่อทั้งหมด</button>' +
       '<button class="btn" data-act="download-excel" title="ดาวน์โหลด Excel ของกิ่งที่โหลดอยู่"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>ดาวน์โหลด Excel</button>' +
       '<button class="btn btn-primary" data-act="add-root"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>เพิ่มหมวดหมู่หลัก</button>' +
-      '<div class="avatar-stack">' + avatarsHtml + '</div>' +
+      '<div class="people-anchor"><div class="avatar-stack" data-act="toggle-people" title="ดูรายชื่อผู้ใช้งานออนไลน์">' + avatarsHtml + '</div>' + (state.peopleOpen ? renderPeoplePopover(others) : '') + '</div>' +
       '<button class="btn" data-act="toggle-share"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.6l6.8-3.8M8.6 13.4l6.8 3.8"/></svg>แชร์</button>' +
       (state.shareOpen ? '<div class="share-popover"><div class="share-title">แชร์ผังโครงสร้างนี้</div><div class="share-row"><input class="share-link-input" type="text" readonly value="' + esc(location.href) + '" /><button class="btn btn-primary small" data-act="copy-link">' + (state.copied ? 'คัดลอกแล้ว!' : 'คัดลอกลิงก์') + '</button></div><p class="share-hint">ทุกคนที่มีลิงก์นี้เข้าแก้ไขและเห็นการเปลี่ยนแปลงแบบเรียลไทม์ได้ (ไม่มีระบบล็อกอิน)</p></div>' : '') +
       '</div></div>' +
@@ -983,6 +1005,13 @@
     if (e.target.closest && e.target.closest('[data-act="text-color"]')) { e.preventDefault(); return; }
     if (!wrapEl || !canvasEl || !wrapEl.contains(e.target)) return;
     if (!isBackgroundTarget(e, wrapEl, canvasEl)) return;
+    if (state.selectedId) {
+      state.selectedId = null;
+      render();
+      wrapEl = document.getElementById('mindWrap');
+      canvasEl = document.getElementById('mindCanvas');
+      if (!wrapEl || !canvasEl) return;
+    }
     if (state.tool === 'pencil') startStroke(e, canvasEl);
     else if (state.tool === 'text') placeText(e, canvasEl);
     else startPan(e, wrapEl);
@@ -1029,6 +1058,13 @@
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'pencil-size') { state.pencilSize = Number(e.target.value); render(); }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'text-size') { state.textSize = Number(e.target.value); render(); }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') state.renameDraft = e.target.value;
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input') {
+      myName = e.target.value;
+      var nameSelStart = e.target.selectionStart, nameSelEnd = e.target.selectionEnd;
+      render();
+      var nameInput = app.querySelector('[data-act="my-name-input"]');
+      if (nameInput) { nameInput.focus(); if (typeof nameSelStart === 'number' && nameInput.setSelectionRange) { try { nameInput.setSelectionRange(nameSelStart, nameSelEnd); } catch (er) {} } }
+    }
   });
 
   app.addEventListener('blur', function (e) {
@@ -1038,18 +1074,10 @@
 
   app.addEventListener('keydown', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input' && e.key === 'Enter') e.target.blur();
-    if (e.target.getAttribute && e.target.getAttribute('data-field') === 'name' && e.key === 'Tab' && !e.shiftKey) {
-      e.preventDefault();
-      if (state.selectedId) {
-        addChild(state.selectedId, function () {
-          var nameEl = app.querySelector('[data-field="name"]');
-          if (nameEl) { nameEl.focus(); nameEl.select(); }
-        });
-      }
-    }
   });
   app.addEventListener('focusout', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') commitRenameSheet();
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input') setMyName(e.target.value);
   });
   app.addEventListener('change', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'image-change') handleImageChange(e.target.files && e.target.files[0]);
@@ -1084,6 +1112,7 @@
       case 'download-excel': downloadCurrentViewAsExcel(); break;
       case 'add-root': addChild(null); break;
       case 'toggle-share': state.shareOpen = !state.shareOpen; render(); break;
+      case 'toggle-people': state.peopleOpen = !state.peopleOpen; render(); break;
       case 'copy-link': try { navigator.clipboard.writeText(location.href); } catch (er) {} state.copied = true; render(); setTimeout(function () { state.copied = false; render(); }, 1500); break;
       case 'close-panel': state.selectedId = null; render(); break;
       case 'image-delete': handleImageDelete(); break;
