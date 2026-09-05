@@ -178,10 +178,9 @@
   .mind-resize-handle { position: absolute; right: -4px; bottom: -4px; width: 12px; height: 12px; border-radius: 3px; background: var(--primary); cursor: nwse-resize; opacity: 0; transition: opacity .1s ease; z-index: 3; }
   .mind-text-annotation:hover + .mind-resize-handle, .mind-resize-handle:hover, .mind-resize-handle.active { opacity: 1; }
 
-  .zoom-controls, .draw-toolbar { position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-md); z-index: 5; }
-  .zoom-controls { bottom: 24px; right: 24px; display: flex; align-items: center; gap: 2px; padding: 4px; }
+  .zoom-controls { position: fixed; bottom: 24px; right: 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-md); z-index: 5; display: flex; align-items: center; gap: 2px; padding: 4px; }
   .zoom-label { font-size: 12px; color: var(--text-muted); width: 42px; text-align: center; font-family: 'Sora', sans-serif; }
-  .draw-toolbar { bottom: 24px; left: 24px; display: flex; flex-direction: column-reverse; gap: 8px; padding: 8px; }
+  .draw-toolbar { display: inline-flex; flex-direction: column; gap: 8px; padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-md); margin-bottom: 16px; }
   .draw-tool-row { display: flex; gap: 4px; }
   .draw-tool-btn { width: 34px; height: 34px; border-radius: 8px; border: none; background: transparent; color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; }
   .draw-tool-btn:hover { background: var(--surface-2); }
@@ -898,8 +897,6 @@
     var pointerActive = state.tool === 'pointer', pencilActive = state.tool === 'pencil', textActive = state.tool === 'text';
     return '<div class="mindmap-wrap" id="mindWrap" style="cursor:' + (pencilActive ? 'crosshair' : textActive ? 'text' : 'grab') + '">' +
       renderLegend() +
-      '<div class="mindmap-canvas" id="mindCanvas" style="width:' + layout.width + 'px;height:' + layout.height + 'px;transform:scale(' + state.zoom + ');transform-origin:top left;">' +
-      '<svg style="position:absolute;inset:0;width:' + layout.width + 'px;height:' + layout.height + 'px;pointer-events:none;overflow:visible;">' + edgesSvg + drawSvg + '</svg>' + cardsHtml + textsHtml + '</div>' +
       '<div class="draw-toolbar"><div class="draw-tool-row">' +
       '<button class="draw-tool-btn' + (pointerActive ? ' active' : '') + '" data-act="set-tool" data-tool="pointer" title="ตัวชี้ (โหมดปกติ)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/></svg></button>' +
       '<button class="draw-tool-btn' + (pencilActive ? ' active' : '') + '" data-act="set-tool" data-tool="pencil" title="ดินสอวาดเส้น"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>' +
@@ -907,6 +904,8 @@
       (pencilActive ? '<div class="draw-settings"><div class="draw-swatches">' + DRAW_PALETTE.map(function (c) { return '<button class="draw-swatch" style="background:' + c + ';' + (c === state.pencilColor ? 'border-color:var(--text);' : '') + '" data-act="pencil-color" data-color="' + c + '"></button>'; }).join('') + '</div><div class="draw-size-row"><input type="range" min="1" max="10" value="' + state.pencilSize + '" data-act="pencil-size" /><span class="draw-size-label">' + state.pencilSize + 'px</span></div></div>' : '') +
       (textActive ? '<div class="draw-settings"><div class="draw-swatches">' + DRAW_PALETTE.map(function (c) { return '<button class="draw-swatch" style="background:' + c + ';' + (c === state.textColor ? 'border-color:var(--text);' : '') + '" data-act="text-color" data-color="' + c + '"></button>'; }).join('') + '</div><div class="draw-size-row"><input type="range" min="12" max="32" value="' + state.textSize + '" data-act="text-size" /><span class="draw-size-label">' + state.textSize + 'px</span></div></div>' : '') +
       '</div>' +
+      '<div class="mindmap-canvas" id="mindCanvas" style="width:' + layout.width + 'px;height:' + layout.height + 'px;transform:scale(' + state.zoom + ');transform-origin:top left;">' +
+      '<svg style="position:absolute;inset:0;width:' + layout.width + 'px;height:' + layout.height + 'px;pointer-events:none;overflow:visible;">' + edgesSvg + drawSvg + '</svg>' + cardsHtml + textsHtml + '</div>' +
       '<div class="zoom-controls"><button class="icon-btn" data-act="zoom-out"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"/></svg></button><span class="zoom-label">' + Math.round(state.zoom * 100) + '%</span><button class="icon-btn" data-act="zoom-in"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button><button class="icon-btn" data-act="zoom-reset" title="รีเซ็ตซูม"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 1 3.5 7.1M3 12v5h5"/></svg></button></div>' +
       '</div>';
   }
