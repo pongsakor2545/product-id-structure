@@ -72,22 +72,53 @@ of silently failing.
 ## Deploying (Render.com)
 
 Render is used here because it supports a long-running Node process with
-WebSockets (needed for real-time sync) and has a managed Postgres add-on —
-many "serverless" hosts don't support persistent WebSocket connections.
+WebSockets (needed for real-time sync) — many "serverless" hosts don't
+support persistent WebSocket connections. The database itself is Supabase
+(see below), not Render's own Postgres add-on.
 
 1. Push this `app/` folder to a GitHub repository.
 2. Go to [render.com](https://render.com), sign up, click **New → Blueprint**,
-   and point it at your repository. Render reads `render.yaml` in this folder
-   and sets up both the web service and the Postgres database automatically.
-3. Once created, go to the web service's **Environment** tab and add
-   `GOOGLE_SERVICE_ACCOUNT_JSON` if you want the export feature (see above).
-   `DATABASE_URL` is already wired up by the blueprint.
+   and point it at your repository. Render reads `render.yaml` and sets up
+   the web service (free plan) — it does not create its own database.
+3. Once created, go to the web service's **Environment** tab and set:
+   - `DATABASE_URL` — your Supabase connection string (see
+     [Using Supabase](#using-supabase-instead-of-renders-built-in-postgres) below).
+   - `GOOGLE_SERVICE_ACCOUNT_JSON` — only if you want the Sheets export
+     feature (see above).
 4. After the first successful deploy, open a one-off shell for the service
    (Render dashboard → your service → **Shell**) and run
    `node scripts/seedDemo.js` once to create a starting sheet (skip this if
    you'd rather start from a completely empty structure — the app also
    auto-creates one empty sheet on first load if none exist).
 5. Your app is now live at `https://<your-service-name>.onrender.com`.
+
+### Using Supabase instead of Render's built-in Postgres
+
+The app just needs any standard PostgreSQL connection string in
+`DATABASE_URL` — Supabase's database is regular Postgres underneath, so it
+works with zero code changes.
+
+Supabase's **free plan allows 2 active projects per account** (paused
+projects don't count against that, and free projects auto-pause after a week
+of inactivity). If your existing account is already at that limit, a second,
+separate Supabase account for this project is a reasonable way around it —
+and since accounts are fully isolated from each other, creating a new one
+has **no effect whatsoever** on your existing projects or their data; nothing
+is shared or freed up between accounts.
+
+To use Supabase as the database:
+1. At [supabase.com](https://supabase.com), create a project (on whichever
+   account you choose).
+2. Click **Connect** on the project dashboard, choose the **Session pooler**
+   connection string (IPv4-compatible — needed since Render doesn't support
+   outbound IPv6) — it looks like
+   `postgresql://postgres.xxxx:[YOUR-PASSWORD]@aws-0-<region>.pooler.supabase.com:5432/postgres`.
+   Replace `[YOUR-PASSWORD]` with the database password you set when creating
+   the project.
+3. Paste that full string as `DATABASE_URL` on the web service in Render's
+   **Environment** tab.
+4. Redeploy. The app creates its tables automatically on first boot (see
+   `server/db.js`), so no manual schema setup is needed in Supabase.
 
 ### Pointing your own domain at it
 

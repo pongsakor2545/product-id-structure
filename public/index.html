@@ -167,12 +167,13 @@
   .mind-card.selected { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-tint); }
   .mind-card.dragover { border-color: var(--success-line); outline: 1.5px dashed var(--success-line); outline-offset: -2px; }
   .mind-card.dragging { opacity: 0.4; }
+  .mind-card .thumb-img, .mind-card .thumb-fallback { width: 40px; height: 40px; border-radius: 9px; font-size: 16px; }
   .mind-text-stack { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-  .mind-en { font-family: 'Sora', 'Noto Sans Thai', sans-serif; font-size: 13.5px; font-weight: 700; color: var(--text); line-height: 1.25; overflow-wrap: break-word; word-break: break-word; }
-  .mind-th { font-size: 11px; font-weight: 400; color: var(--thai-blue); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mind-en { font-family: 'Sora', 'Noto Sans Thai', sans-serif; font-size: 12px; font-weight: 700; color: var(--text); line-height: 1.25; overflow-wrap: break-word; word-break: break-word; }
+  .mind-th { font-size: 10px; font-weight: 400; color: var(--thai-blue); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mind-toggle-pill { position: absolute; right: -11px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--border-strong); font-size: 10.5px; font-weight: 700; color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 2; }
   .mind-toggle-pill:hover { background: var(--surface-2); }
-  .mind-add-btn { position: absolute; left: -11px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 50%; background: var(--primary); border: none; color: white; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity .1s ease; z-index: 2; }
+  .mind-add-btn { position: absolute; right: -11px; bottom: -11px; width: 22px; height: 22px; border-radius: 50%; background: var(--primary); border: none; color: white; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity .1s ease; z-index: 2; }
   .mind-card:hover .mind-add-btn { opacity: 1; }
 
   .mind-text-annotation { position: absolute; background: transparent; border: 1px dashed transparent; border-radius: 4px; padding: 3px 6px; font-family: 'Noto Sans Thai', sans-serif; min-width: 40px; min-height: 20px; cursor: text; overflow: auto; }
@@ -377,12 +378,13 @@
     (function walk(ids) { ids.forEach(function (id) { var n = nodesById.get(id); if (n && n.childCount > 0) { n.collapsed = value; api('PATCH', '/api/nodes/' + id, { collapsed: value }).catch(function () {}); } if (n && n.childrenLoaded) walk(n.childrenIds); }); })(state.rootIds);
     render();
   }
-  function addChild(parentId) {
+  function addChild(parentId, onDone) {
     api('POST', '/api/sheets/' + state.activeSheetId + '/nodes', { parentId: parentId, name: 'New Category' }).then(function (node) {
       nodesById.set(node.id, toCacheNode(node, parentId));
       attachToParent(node.id, parentId);
       state.selectedId = node.id;
       render();
+      if (onDone) onDone();
     });
   }
   function deleteNode(id) {
@@ -977,6 +979,15 @@
   app.addEventListener('keydown', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input' && e.key === 'Enter') e.target.blur();
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'search-input' && e.key === 'Escape') { state.searchOpen = false; e.target.blur(); render(); }
+    if (e.target.getAttribute && e.target.getAttribute('data-field') === 'name' && e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault();
+      if (state.selectedId) {
+        addChild(state.selectedId, function () {
+          var nameEl = app.querySelector('[data-field="name"]');
+          if (nameEl) { nameEl.focus(); nameEl.select(); }
+        });
+      }
+    }
   });
   app.addEventListener('focusout', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') commitRenameSheet();
