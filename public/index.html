@@ -67,17 +67,6 @@
   .brand-sub { font-size: 12.5px; color: var(--text-muted); }
   .topbar-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; position: relative; flex-wrap: wrap; }
 
-  .search-box { position: relative; }
-  .search-input { height: 36px; width: 220px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); padding: 0 12px; font-size: 13px; color: var(--text); }
-  .search-input:focus { background: var(--surface); border-color: var(--primary); }
-  .search-results { position: absolute; top: 42px; left: 0; width: 340px; max-height: 360px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow-lg); z-index: 40; }
-  .search-result { display: block; width: 100%; text-align: left; padding: 9px 12px; border: none; background: transparent; cursor: pointer; border-bottom: 1px solid var(--border); }
-  .search-result:last-child { border-bottom: none; }
-  .search-result:hover { background: var(--surface-2); }
-  .search-result-name { font-size: 13px; font-weight: 600; }
-  .search-result-path { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-  .search-empty { padding: 14px; font-size: 12.5px; color: var(--text-muted); text-align: center; }
-
   .btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 13.5px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: background .12s ease, border-color .12s ease; }
   .btn:hover { background: var(--surface-2); }
   .btn.small { height: 30px; padding: 0 10px; font-size: 12.5px; }
@@ -102,11 +91,11 @@
   .view-toggle-btn { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 6px; border: none; background: transparent; color: var(--text-muted); font-size: 12.5px; font-weight: 500; cursor: pointer; }
   .view-toggle-btn.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
 
-  .share-popover, .ctx-menu, .export-popover { position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 30; }
-  .share-popover, .export-popover { top: 62px; right: 24px; width: 340px; padding: 16px; }
+  .share-popover, .ctx-menu { position: fixed; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 30; }
+  .share-popover { top: 62px; right: 24px; width: 340px; padding: 16px; }
   .share-title { font-size: 13.5px; font-weight: 600; margin-bottom: 10px; }
   .share-row { display: flex; gap: 8px; }
-  .share-link-input, .export-input { flex: 1; height: 32px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface-2); padding: 0 10px; font-size: 12.5px; color: var(--text); }
+  .share-link-input { flex: 1; height: 32px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface-2); padding: 0 10px; font-size: 12.5px; color: var(--text); }
   .share-hint { font-size: 12px; color: var(--text-muted); margin: 10px 0 0; line-height: 1.5; }
 
   .ctx-overlay { position: fixed; inset: 0; z-index: 29; }
@@ -262,8 +251,6 @@
     renamingSheetId: null, renameDraft: '',
     contextMenuSheetId: null, contextMenuX: 0,
     annoCtx: null,
-    searchOpen: false, searchQuery: '', searchResults: [],
-    exportOpen: false, exportValue: '',
     toast: null
   };
 
@@ -467,84 +454,144 @@
     });
   }
   function imageSrc(node) { return node._localImagePreview || node.imageUrl; }
-
-  // ---------- search ----------
-  var searchDebounce = null;
-  function runSearch(q) {
-    state.searchQuery = q;
-    clearTimeout(searchDebounce);
-    if (!q.trim()) { state.searchResults = []; render(); return; }
-    searchDebounce = setTimeout(function () {
-      api('GET', '/api/sheets/' + state.activeSheetId + '/search?q=' + encodeURIComponent(q)).then(function (results) {
-        state.searchResults = results; render();
-      });
-    }, 250);
-  }
-  function revealSearchResult(result) {
-    state.searchOpen = false; state.searchQuery = ''; state.searchResults = [];
-    var chain = result.path.map(function (p) { return p.id; });
-    (function next(i) {
-      if (i >= chain.length) {
-        state.selectedId = result.id;
-        render();
-        setTimeout(function () {
-          var el = app.querySelector('[data-row-id="' + result.id + '"], [data-card-id="' + result.id + '"]');
-          if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        }, 60);
-        return;
-      }
-      var aid = chain[i];
-      var proceed = function () {
-        var anode = nodesById.get(aid);
-        if (anode && anode.collapsed) { anode.collapsed = false; api('PATCH', '/api/nodes/' + aid, { collapsed: false }).catch(function () {}); }
-        ensureChildrenLoaded(aid);
-        var check = setInterval(function () {
-          var n2 = nodesById.get(aid);
-          if (n2 && n2.childrenLoaded) { clearInterval(check); next(i + 1); }
-        }, 40);
-      };
-      if (nodesById.has(aid)) { proceed(); }
-      else {
-        api('GET', '/api/nodes/' + aid).then(function (full) {
-          nodesById.set(aid, toCacheNode(full, full.parentId));
-          proceed();
-        });
-      }
-    })(0);
+  function handleImageDelete() {
+    if (!state.selectedId) return;
+    var node = nodesById.get(state.selectedId);
+    if (!node || !imageSrc(node)) return;
+    node._localImagePreview = null;
+    node.imageUrl = null;
+    render();
+    api('PATCH', '/api/nodes/' + node.id, { image: null }).catch(function () { showToast('ลบรูปไม่สำเร็จ'); });
   }
 
-  // ---------- Excel export (real download — no sandbox on our own domain) ----------
-  function flattenForExport(nodeIds, trail) {
-    var rows = [];
-    nodeIds.forEach(function (id) {
-      var n = nodesById.get(id); if (!n) return;
-      var path = trail.concat([n.name]).join(' > ');
-      rows.push({ level: n.level, path: path, name: n.name, translation: n.translation, definition: n.definition, hasImage: n.imageUrl ? 'Yes' : 'No' });
-      if (n.childrenLoaded) rows = rows.concat(flattenForExport(n.childrenIds, trail.concat([n.name])));
+  // ---------- Excel export (real .xlsx, built client-side -- no sandbox on our own domain) ----------
+  function u16(n) { return [n & 0xFF, (n >> 8) & 0xFF]; }
+  function u32(n) { return [n & 0xFF, (n >> 8) & 0xFF, (n >> 16) & 0xFF, (n >> 24) & 0xFF]; }
+  function strBytes(s) { return Array.from(new TextEncoder().encode(s)); }
+  function crc32(bytes) {
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) {
+      c ^= bytes[i];
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function buildZip(files) {
+    var localParts = [], central = [], offset = 0;
+    files.forEach(function (f) {
+      var nameBytes = strBytes(f.name), data = f.data, crc = crc32(data), size = data.length;
+      var local = [].concat(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(size), u32(size), u16(nameBytes.length), u16(0), nameBytes, data);
+      var localOffset = offset;
+      localParts.push(local);
+      offset += local.length;
+      central.push([].concat(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(size), u32(size), u16(nameBytes.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(localOffset), nameBytes));
     });
-    return rows;
+    var centralBytes = [].concat.apply([], central);
+    var end = [].concat(u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length), u32(centralBytes.length), u32(offset), u16(0));
+    return Uint8Array.from([].concat.apply([], localParts).concat(centralBytes, end));
   }
-  function downloadCurrentViewAsCsv() {
-    var table = [['Level', 'Path', 'Category Name (EN)', 'Thai Translation', 'Definition', 'Has Image']];
-    flattenForExport(state.rootIds, []).forEach(function (r) { table.push(['L' + r.level, r.path, r.name, r.translation, r.definition, r.hasImage]); });
-    var csv = table.map(function (row) { return row.map(function (c) { var s = String(c || ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(','); }).join('\r\n');
-    var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  function escXml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function escAttr(s) { return escXml(s).replace(/"/g, '&quot;'); }
+  function colLetter(n) { var s = ''; while (n > 0) { var r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = Math.floor((n - 1) / 26); } return s; }
+  function buildXlsxBytes(sheetName, header, rows, merges) {
+    var files = [];
+    files.push({ name: '[Content_Types].xml', data: strBytes('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>') });
+    files.push({ name: '_rels/.rels', data: strBytes('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>') });
+    files.push({ name: 'xl/_rels/workbook.xml.rels', data: strBytes('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>') });
+    files.push({ name: 'xl/workbook.xml', data: strBytes('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="' + escAttr(sheetName) + '" sheetId="1" r:id="rId1"/></sheets></workbook>') });
+    files.push({ name: 'xl/styles.xml', data: strBytes('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>') });
+    var allRows = [header].concat(rows);
+    var rowsXml = '';
+    allRows.forEach(function (row, ri) {
+      var cellsXml = '';
+      row.forEach(function (val, ci) {
+        if (val === '' || val == null) return;
+        cellsXml += '<c r="' + colLetter(ci + 1) + (ri + 1) + '" s="1" t="inlineStr"><is><t xml:space="preserve">' + escXml(val) + '</t></is></c>';
+      });
+      rowsXml += '<row r="' + (ri + 1) + '" customHeight="1" ht="30">' + cellsXml + '</row>';
+    });
+    var mergeXml = '';
+    if (merges && merges.length) {
+      var refs = merges.map(function (m) {
+        var col = colLetter(m.col), r1 = m.rowStart + 2, r2 = m.rowEnd + 2;
+        return '<mergeCell ref="' + col + r1 + ':' + col + r2 + '"/>';
+      });
+      mergeXml = '<mergeCells count="' + refs.length + '">' + refs.join('') + '</mergeCells>';
+    }
+    files.push({ name: 'xl/worksheets/sheet1.xml', data: strBytes('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>' + rowsXml + '</sheetData>' + mergeXml + '</worksheet>') });
+    return buildZip(files);
+  }
+  // Column layout: A = Level 1, B = Level 1 definition, then one column per
+  // additional level (C = Level 2, D = Level 3, ...). Each level's cell holds
+  // the English name with the Thai translation on a second line.
+  function colForLevel(level) { return level === 1 ? 1 : level + 1; }
+  function collectLeafPaths(ids, ancestors, maxDepthRef) {
+    var out = [];
+    ids.forEach(function (id) {
+      var n = nodesById.get(id); if (!n) return;
+      var path = ancestors.concat([n]);
+      if (n.level > maxDepthRef.value) maxDepthRef.value = n.level;
+      if (n.childrenLoaded && n.childrenIds.length) out = out.concat(collectLeafPaths(n.childrenIds, path, maxDepthRef));
+      else out.push(path);
+    });
+    return out;
+  }
+  function buildHierarchyExport(rootIds) {
+    var maxDepthRef = { value: 1 };
+    var leafPaths = collectLeafPaths(rootIds, [], maxDepthRef);
+    var maxDepth = maxDepthRef.value;
+    var totalCols = maxDepth + 1;
+
+    var header = ['Level 1', 'คำนิยาม Level 1'];
+    for (var lvl = 2; lvl <= maxDepth; lvl++) header.push('Level ' + lvl);
+
+    var rawRows = leafPaths.map(function (path) {
+      var row = [];
+      for (var l = 0; l < maxDepth; l++) row.push(path[l] || null);
+      return row;
+    });
+
+    var merges = [];
+    for (var l2 = 0; l2 < maxDepth; l2++) {
+      var i = 0;
+      while (i < rawRows.length) {
+        var node = rawRows[i][l2];
+        if (!node) { i++; continue; }
+        var j = i;
+        while (j + 1 < rawRows.length && rawRows[j + 1][l2] && rawRows[j + 1][l2].id === node.id) j++;
+        if (j > i) {
+          var col = colForLevel(l2 + 1);
+          merges.push({ col: col, rowStart: i, rowEnd: j });
+          if (l2 === 0) merges.push({ col: 2, rowStart: i, rowEnd: j });
+        }
+        i = j + 1;
+      }
+    }
+
+    var dataRows = rawRows.map(function (row, ri) {
+      var out = new Array(totalCols).fill('');
+      row.forEach(function (node, l2) {
+        if (!node) return;
+        var col = colForLevel(l2 + 1);
+        var continued = merges.some(function (m) { return m.col === col && ri > m.rowStart && ri <= m.rowEnd; });
+        if (continued) return;
+        out[col - 1] = node.name + (node.translation ? '\n' + node.translation : '');
+        if (l2 === 0) out[1] = node.definition || '';
+      });
+      return out;
+    });
+
+    return { header: header, rows: dataRows, merges: merges };
+  }
+  function downloadCurrentViewAsExcel() {
+    var h = buildHierarchyExport(state.rootIds);
+    var bytes = buildXlsxBytes('Product ID', h.header, h.rows, h.merges);
+    var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'product-id-structure.csv';
+    a.download = 'product-id-structure.xlsx';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    showToast('ดาวน์โหลด CSV แล้ว (เฉพาะกิ่งที่โหลด/ขยายไว้ในหน้าจอ)');
-  }
-  function submitExportToGoogle() {
-    var raw = state.exportValue.trim();
-    var m = /\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/.exec(raw);
-    var spreadsheetId = m ? m[1] : raw;
-    if (!spreadsheetId) return;
-    state.exportOpen = false; render();
-    showToast('กำลังส่งออกไป Google Sheet...');
-    api('POST', '/api/sheets/' + state.activeSheetId + '/export-to-google', { spreadsheetId: spreadsheetId }).then(function (r) {
-      showToast('ส่งออกสำเร็จ (' + r.rows + ' แถว)');
-    }).catch(function (e) { showToast('ส่งออกไม่สำเร็จ: ' + (e.message || 'error')); });
+    showToast('ดาวน์โหลด Excel แล้ว (เฉพาะกิ่งที่โหลด/ขยายไว้ในหน้าจอ)');
   }
 
   function showToast(msg) {
@@ -835,7 +882,6 @@
     }).join('');
     var pointerActive = state.tool === 'pointer', pencilActive = state.tool === 'pencil', textActive = state.tool === 'text';
     return '<div class="mindmap-wrap" id="mindWrap" style="cursor:' + (pencilActive ? 'crosshair' : textActive ? 'text' : 'grab') + '">' +
-      '<div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>ลากการ์ด (พร้อมหมวดย่อยทั้งหมด) ไปวางบนการ์ดอื่นเพื่อย้าย · คลิกวงกลมตัวเลขเพื่อย่อ/ขยายกิ่ง</div>' +
       renderLegend() +
       '<div class="mindmap-canvas" id="mindCanvas" style="width:' + layout.width + 'px;height:' + layout.height + 'px;transform:scale(' + state.zoom + ');transform-origin:top left;">' +
       '<svg style="position:absolute;inset:0;width:' + layout.width + 'px;height:' + layout.height + 'px;pointer-events:none;overflow:visible;">' + edgesSvg + drawSvg + '</svg>' + cardsHtml + textsHtml + '</div>' +
@@ -859,12 +905,13 @@
     var node = state.selectedId ? nodesById.get(state.selectedId) : null;
     if (!node) return '';
     var colors = colorForLevel(node.level);
-    var imageBlock = imageSrc(node) ? '<img class="image-preview" src="' + esc(imageSrc(node)) + '" />' : '<div class="image-fallback" style="background:' + colors.solid + '">' + esc(initialOf(node.name)) + '</div>';
+    var hasImage = !!imageSrc(node);
+    var imageBlock = hasImage ? '<img class="image-preview" src="' + esc(imageSrc(node)) + '" />' : '<div class="image-fallback" style="background:' + colors.solid + '">' + esc(initialOf(node.name)) + '</div>';
     return '<div class="panel"><div class="panel-header"><div class="breadcrumb">' + esc(breadcrumbFor(node.id)) + '</div><button class="icon-btn" data-act="close-panel"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>' +
       '<div class="panel-body">' +
       '<div class="field"><label>ชื่อหมวดหมู่ (English)</label><input class="name-input" type="text" value="' + esc(node.name) + '" data-field="name" /></div>' +
       '<div class="level-row"><span class="level-badge" style="background:' + colors.tintBg + ';color:' + colors.tintText + '">L' + node.level + '</span><span class="muted">' + (node.childCount ? node.childCount + ' หมวดย่อย' : 'ยังไม่มีหมวดย่อย') + '</span></div>' +
-      '<div class="field"><label>รูปภาพหมวดหมู่</label><div class="image-upload">' + imageBlock + '<label class="btn btn-ghost small" for="pid-img-upload">เปลี่ยนรูปภาพ</label><input id="pid-img-upload" type="file" accept="image/*" style="display:none" data-act="image-change" /></div></div>' +
+      '<div class="field"><label>รูปภาพหมวดหมู่</label><div class="image-upload">' + imageBlock + '<label class="btn btn-ghost small" for="pid-img-upload">เปลี่ยนรูปภาพ</label><input id="pid-img-upload" type="file" accept="image/*" style="display:none" data-act="image-change" />' + (hasImage ? '<button class="btn btn-danger-ghost small" data-act="image-delete">ลบรูปภาพ</button>' : '') + '</div></div>' +
       '<div class="field"><label>คำนิยาม (Definition)</label><textarea data-field="definition" placeholder="อธิบายว่าหมวดหมู่นี้ครอบคลุมสินค้าประเภทใดบ้าง...">' + esc(node.definition) + '</textarea></div>' +
       '<div class="field"><label>คำแปล (ภาษาไทย)</label><input type="text" value="' + esc(node.translation) + '" data-field="translation" placeholder="เช่น สมาร์ทโฟน" /></div>' +
       '<div class="panel-actions"><button class="btn btn-primary" data-act="add-sub"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>เพิ่มหมวดย่อยของหมวดนี้</button><button class="btn btn-danger-ghost" data-act="delete-selected">ลบหมวดหมู่นี้</button></div>' +
@@ -891,17 +938,6 @@
     return '<div class="ctx-overlay" data-act="close-anno-ctx"></div><div class="ctx-menu" style="left:' + state.annoCtx.x + 'px;top:' + state.annoCtx.y + 'px;">' +
       '<button class="ctx-item danger" data-act="anno-delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m2 0-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7"/></svg>ลบ' + label + '</button></div>';
   }
-  function renderSearchResults() {
-    if (!state.searchOpen) return '';
-    var body;
-    if (!state.searchQuery.trim()) body = '<div class="search-empty">พิมพ์ชื่อหมวดหมู่เพื่อค้นหา...</div>';
-    else if (!state.searchResults.length) body = '<div class="search-empty">ไม่พบผลลัพธ์</div>';
-    else body = state.searchResults.map(function (r, i) {
-      var path = r.path.map(function (p) { return esc(p.name); }).join(' / ');
-      return '<button class="search-result" data-act="search-pick" data-index="' + i + '"><div class="search-result-name">' + esc(r.name) + (r.translation ? ' · ' + esc(r.translation) : '') + '</div>' + (path ? '<div class="search-result-path">' + path + '</div>' : '') + '</button>';
-    }).join('');
-    return '<div class="search-results">' + body + '</div>';
-  }
 
   function renderApp() {
     var prevScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
@@ -912,16 +948,13 @@
     var onlineCount = peers.length + 1;
     var html = '<div class="topbar">' +
       '<div class="brand"><div class="brand-title">โครงสร้าง Product ID</div><div class="brand-sub"><span class="conn-dot ' + (state.wsConnected ? 'on' : 'off') + '"></span>' + (state.wsConnected ? onlineCount + ' คนออนไลน์' : 'ขาดการเชื่อมต่อ กำลังลองใหม่...') + '</div></div>' +
-      '<div class="search-box"><input class="search-input" placeholder="ค้นหาหมวดหมู่..." value="' + esc(state.searchQuery) + '" data-act="search-input" data-focus-act="search-open" />' + renderSearchResults() + '</div>' +
       '<div class="view-toggle">' +
       '<button class="view-toggle-btn' + (state.viewMode === 'tree' ? ' active' : '') + '" data-act="set-view" data-view="tree"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>มุมมองรายการ</button>' +
       '<button class="view-toggle-btn' + (state.viewMode === 'mind' ? ' active' : '') + '" data-act="set-view" data-view="mind"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="12" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.2 11.3L15.8 6.7M7.4 12h8.2M7.2 12.7l8.6 4.6"/></svg>มุมมองผัง</button></div>' +
       '<div class="topbar-right">' +
       '<button class="btn btn-ghost small" data-act="expand-all">ขยายทั้งหมด</button>' +
       '<button class="btn btn-ghost small" data-act="collapse-all">ย่อทั้งหมด</button>' +
-      '<button class="btn" data-act="download-csv" title="ดาวน์โหลด CSV ของกิ่งที่โหลดอยู่"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>ดาวน์โหลด CSV</button>' +
-      '<button class="btn" data-act="toggle-export" title="ส่งออกทั้งชีทไป Google Sheet"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M20 21H4a1 1 0 0 1-1-1v-4"/><path d="M20 16v4a1 1 0 0 1-1 1"/></svg>ส่งออกไป Sheet</button>' +
-      (state.exportOpen ? '<div class="export-popover"><div class="share-title">ส่งออกไป Google Sheet</div><input class="export-input" placeholder="วางลิงก์หรือ Spreadsheet ID" value="' + esc(state.exportValue) + '" data-act="export-input" /><div style="margin-top:10px;display:flex;gap:8px;"><button class="btn btn-primary small" data-act="export-submit">ส่งออก</button><button class="btn btn-ghost small" data-act="export-cancel">ยกเลิก</button></div><p class="share-hint">ต้องแชร์ Sheet นั้นกับอีเมล Service Account ของเซิร์ฟเวอร์ (สิทธิ์ Editor) ไว้ก่อน</p></div>' : '') +
+      '<button class="btn" data-act="download-excel" title="ดาวน์โหลด Excel ของกิ่งที่โหลดอยู่"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>ดาวน์โหลด Excel</button>' +
       '<button class="btn btn-primary" data-act="add-root"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>เพิ่มหมวดหมู่หลัก</button>' +
       '<div class="avatar-stack">' + avatarsHtml + '</div>' +
       '<button class="btn" data-act="toggle-share"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.6l6.8-3.8M8.6 13.4l6.8 3.8"/></svg>แชร์</button>' +
@@ -934,7 +967,6 @@
     var newScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
     if (newScrollEl) { newScrollEl.scrollLeft = prevScrollLeft; newScrollEl.scrollTop = prevScrollTop; }
     if (state.renamingSheetId) { var inp = document.getElementById('sheetRenameInput'); if (inp) { inp.focus(); inp.select(); } }
-    if (state.searchOpen) { var si = app.querySelector('.search-input'); if (si && document.activeElement !== si) { /* keep focus if user is typing */ } }
   }
   var render = renderApp;
 
@@ -997,13 +1029,8 @@
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'pencil-size') { state.pencilSize = Number(e.target.value); render(); }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'text-size') { state.textSize = Number(e.target.value); render(); }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') state.renameDraft = e.target.value;
-    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'search-input') runSearch(e.target.value);
-    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'export-input') state.exportValue = e.target.value;
   });
 
-  app.addEventListener('focusin', function (e) {
-    if (e.target.getAttribute && e.target.getAttribute('data-focus-act') === 'search-open') { state.searchOpen = true; render(); var si = app.querySelector('.search-input'); if (si) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); } }
-  });
   app.addEventListener('blur', function (e) {
     var textId = e.target.getAttribute && e.target.getAttribute('data-text-id');
     if (textId && !e.target.textContent.trim()) { state.texts = state.texts.filter(function (x) { return x.id !== textId; }); render(); api('DELETE', '/api/texts/' + textId).catch(function () {}); }
@@ -1011,7 +1038,6 @@
 
   app.addEventListener('keydown', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input' && e.key === 'Enter') e.target.blur();
-    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'search-input' && e.key === 'Escape') { state.searchOpen = false; e.target.blur(); render(); }
     if (e.target.getAttribute && e.target.getAttribute('data-field') === 'name' && e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
       if (state.selectedId) {
@@ -1025,10 +1051,6 @@
   app.addEventListener('focusout', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') commitRenameSheet();
   });
-  document.addEventListener('mousedown', function (e) {
-    if (state.searchOpen && !e.target.closest('.search-box')) { state.searchOpen = false; render(); }
-  });
-
   app.addEventListener('change', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'image-change') handleImageChange(e.target.files && e.target.files[0]);
   });
@@ -1059,14 +1081,12 @@
       case 'set-view': state.viewMode = el.getAttribute('data-view'); render(); break;
       case 'expand-all': setAllCollapsed(false); break;
       case 'collapse-all': setAllCollapsed(true); break;
-      case 'download-csv': downloadCurrentViewAsCsv(); break;
-      case 'toggle-export': state.exportOpen = !state.exportOpen; render(); break;
-      case 'export-cancel': state.exportOpen = false; render(); break;
-      case 'export-submit': submitExportToGoogle(); break;
+      case 'download-excel': downloadCurrentViewAsExcel(); break;
       case 'add-root': addChild(null); break;
       case 'toggle-share': state.shareOpen = !state.shareOpen; render(); break;
       case 'copy-link': try { navigator.clipboard.writeText(location.href); } catch (er) {} state.copied = true; render(); setTimeout(function () { state.copied = false; render(); }, 1500); break;
       case 'close-panel': state.selectedId = null; render(); break;
+      case 'image-delete': handleImageDelete(); break;
       case 'add-sub': if (state.selectedId) addChild(state.selectedId); break;
       case 'delete-selected': if (state.selectedId) deleteNode(state.selectedId); break;
       case 'switch-sheet': switchSheet(id); break;
@@ -1088,7 +1108,6 @@
       case 'zoom-in': state.zoom = Math.min(1.6, Math.round((state.zoom + 0.1) * 100) / 100); render(); break;
       case 'zoom-out': state.zoom = Math.max(0.5, Math.round((state.zoom - 0.1) * 100) / 100); render(); break;
       case 'zoom-reset': state.zoom = 1; render(); break;
-      case 'search-pick': { var idx = Number(el.getAttribute('data-index')); var r = state.searchResults[idx]; if (r) revealSearchResult(r); break; }
     }
   });
 
