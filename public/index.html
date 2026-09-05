@@ -347,17 +347,17 @@
       state.drawings = r[1];
       state.texts = r[2];
       render();
-    });
+    }).catch(function () { showToast('โหลดชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); });
   }
-  function addSheet() { api('POST', '/api/sheets', { name: 'ชีทใหม่ ' + (state.sheets.length + 1) }).then(function (s) { state.sheets.push(s); switchSheet(s.id); }); }
-  function duplicateSheet(id) { api('POST', '/api/sheets/' + id + '/duplicate').then(function (s) { state.sheets.push(s); state.contextMenuSheetId = null; switchSheet(s.id); }); }
+  function addSheet() { api('POST', '/api/sheets', { name: 'ชีทใหม่ ' + (state.sheets.length + 1) }).then(function (s) { state.sheets.push(s); switchSheet(s.id); }).catch(function () { showToast('เพิ่มชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); }); }
+  function duplicateSheet(id) { api('POST', '/api/sheets/' + id + '/duplicate').then(function (s) { state.sheets.push(s); state.contextMenuSheetId = null; switchSheet(s.id); }).catch(function () { showToast('คัดลอกชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); }); }
   function deleteSheet(id) {
     if (state.sheets.length <= 1) return;
     api('DELETE', '/api/sheets/' + id).then(function () {
       state.sheets = state.sheets.filter(function (s) { return s.id !== id; });
       state.contextMenuSheetId = null;
       if (state.activeSheetId === id) switchSheet(state.sheets[0].id); else render();
-    });
+    }).catch(function () { showToast('ลบชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); });
   }
   function commitRenameSheet() {
     if (!state.renamingSheetId) return;
@@ -381,13 +381,32 @@
     (function walk(ids) { ids.forEach(function (id) { var n = nodesById.get(id); if (n && n.childCount > 0) { n.collapsed = value; api('PATCH', '/api/nodes/' + id, { collapsed: value }).catch(function () {}); } if (n && n.childrenLoaded) walk(n.childrenIds); }); })(state.rootIds);
     render();
   }
-  function addChild(parentId, onDone) {
+  function addChild(parentId) {
+    // Shown immediately (optimistic) rather than waiting on the round-trip,
+    // then swapped for the server's real node once it responds -- or rolled
+    // back with an error toast if the request fails.
+    var tempId = 'temp-' + Math.random().toString(36).slice(2);
+    var parentNode = parentId ? nodesById.get(parentId) : null;
+    var tempNode = {
+      id: tempId, name: 'New Category', translation: '', definition: '',
+      level: parentNode ? parentNode.level + 1 : 1, collapsed: false, imageUrl: null, childCount: 0,
+      parentId: parentId || null, childrenLoaded: false, childrenIds: []
+    };
+    nodesById.set(tempId, tempNode);
+    attachToParent(tempId, parentId);
+    state.selectedId = tempId;
+    render();
     api('POST', '/api/sheets/' + state.activeSheetId + '/nodes', { parentId: parentId, name: 'New Category' }).then(function (node) {
+      removeFromCache(tempId);
       nodesById.set(node.id, toCacheNode(node, parentId));
       attachToParent(node.id, parentId);
-      state.selectedId = node.id;
+      if (state.selectedId === tempId) state.selectedId = node.id;
       render();
-      if (onDone) onDone();
+    }).catch(function () {
+      removeFromCache(tempId);
+      if (state.selectedId === tempId) state.selectedId = null;
+      showToast('เพิ่มหมวดหมู่ไม่สำเร็จ ลองใหม่อีกครั้ง');
+      render();
     });
   }
   function deleteNode(id) {
@@ -395,7 +414,7 @@
       removeFromCache(id);
       if (state.selectedId === id) state.selectedId = null;
       render();
-    });
+    }).catch(function () { showToast('ลบหมวดหมู่ไม่สำเร็จ ลองใหม่อีกครั้ง'); });
   }
   function updateSelected(field, value) {
     var node = nodesById.get(state.selectedId); if (!node) return;
@@ -695,7 +714,7 @@
     function onMove(ev) { points.push(toLocalPoint(ev, canvasEl)); setPts(); }
     function onUp() {
       window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp);
-      api('POST', '/api/sheets/' + state.activeSheetId + '/drawings', { color: state.pencilColor, size: state.pencilSize, points: points }).then(function (d) { state.drawings.push(d); render(); });
+      api('POST', '/api/sheets/' + state.activeSheetId + '/drawings', { color: state.pencilColor, size: state.pencilSize, points: points }).then(function (d) { state.drawings.push(d); render(); }).catch(function () { showToast('บันทึกเส้นไม่สำเร็จ'); render(); });
     }
     window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
   }
@@ -705,7 +724,7 @@
     api('POST', '/api/sheets/' + state.activeSheetId + '/texts', { x: pt[0], y: pt[1], w: 160, h: 40, color: state.textColor, size: state.textSize, content: '' }).then(function (t) {
       state.texts.push(t); render();
       var el = app.querySelector('[data-text-id="' + t.id + '"]'); if (el) el.focus();
-    });
+    }).catch(function () { showToast('เพิ่มข้อความไม่สำเร็จ'); });
   }
   function handleDrawMouseDown(e, id, canvasEl) {
     e.stopPropagation(); if (e.button !== 0) return; e.preventDefault();
@@ -1156,7 +1175,7 @@
     }
   });
 
-  loadSheetsList();
+  loadSheetsList().catch(function () { showToast('โหลดข้อมูลไม่สำเร็จ ลองรีเฟรชหน้าเว็บ'); render(); });
   connectWs();
 })();
 </script>
