@@ -149,7 +149,7 @@
   .field label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
   .field input[type="text"], .field textarea { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font-size: 13.5px; color: var(--text); background: var(--surface); width: 100%; }
   .field input[type="text"]:focus, .field textarea:focus { outline: 2px solid var(--primary-tint); border-color: var(--primary); }
-  .field textarea { min-height: 76px; resize: vertical; line-height: 1.5; }
+  .field textarea { min-height: 76px; resize: none; overflow-y: hidden; line-height: 1.5; }
   .name-input { font-size: 15.5px !important; font-weight: 600; font-family: 'Sora', 'Noto Sans Thai', sans-serif; }
   .level-row { display: flex; align-items: center; gap: 10px; }
   .muted { font-size: 12.5px; color: var(--text-muted); }
@@ -991,6 +991,8 @@
     var newScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
     if (newScrollEl) { newScrollEl.scrollLeft = prevScrollLeft; newScrollEl.scrollTop = prevScrollTop; }
     if (state.renamingSheetId) { var inp = document.getElementById('sheetRenameInput'); if (inp) { inp.focus(); inp.select(); } }
+    var defTextarea = app.querySelector('textarea[data-field="definition"]');
+    if (defTextarea) { defTextarea.style.height = 'auto'; defTextarea.style.height = defTextarea.scrollHeight + 'px'; }
   }
   var render = renderApp;
 
