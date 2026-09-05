@@ -24,7 +24,7 @@ async function migrate() {
       name TEXT NOT NULL DEFAULT '',
       translation TEXT NOT NULL DEFAULT '',
       definition TEXT NOT NULL DEFAULT '',
-      image_data TEXT,
+      image_url TEXT,
       level INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0,
       collapsed BOOLEAN NOT NULL DEFAULT FALSE,
@@ -55,6 +55,19 @@ async function migrate() {
       content TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_texts_sheet ON texts(sheet_id);
+  `);
+
+  // Earlier versions stored images as base64 directly in the row (image_data).
+  // Rename to image_url now that images live in Supabase Storage instead --
+  // guarded so it's a no-op on a fresh database or one already migrated.
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nodes' AND column_name='image_data')
+         AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nodes' AND column_name='image_url') THEN
+        ALTER TABLE nodes RENAME COLUMN image_data TO image_url;
+      END IF;
+    END $$;
   `);
 }
 

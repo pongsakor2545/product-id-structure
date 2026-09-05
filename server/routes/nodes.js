@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { pool } = require('../db');
 const ws = require('../ws');
+const storage = require('../storage');
 
 const patchRouter = require('../wrapAsync');
 const router = patchRouter(express.Router());
@@ -10,12 +11,12 @@ function id() { return crypto.randomUUID(); }
 
 const LIST_SELECT = `
   SELECT n.id, n.name, n.translation, n.definition, n.level, n.collapsed,
-    (n.image_data IS NOT NULL) AS "hasImage",
+    n.image_url AS "imageUrl",
     COUNT(c.id)::int AS "childCount"
   FROM nodes n
   LEFT JOIN nodes c ON c.parent_id = n.id
 `;
-const LIST_GROUP_ORDER = 'GROUP BY n.id, n.name, n.translation, n.definition, n.level, n.collapsed, n.image_data, n.sort_order ORDER BY n.sort_order ASC';
+const LIST_GROUP_ORDER = 'GROUP BY n.id, n.name, n.translation, n.definition, n.level, n.collapsed, n.image_url, n.sort_order ORDER BY n.sort_order ASC';
 
 router.get('/sheets/:sheetId/nodes', async (req, res) => {
   const isRoot = !req.query.parent || req.query.parent === 'root';
@@ -28,25 +29,14 @@ router.get('/sheets/:sheetId/nodes', async (req, res) => {
   res.json(rows);
 });
 
-router.get('/nodes/:id/image', async (req, res) => {
-  const { rows } = await pool.query('SELECT image_data FROM nodes WHERE id = $1', [req.params.id]);
-  const raw = rows[0] && rows[0].image_data;
-  if (!raw) return res.status(404).end();
-  const match = /^data:([^;]+);base64,(.+)$/.exec(raw);
-  if (!match) return res.status(404).end();
-  res.set('Content-Type', match[1]);
-  res.set('Cache-Control', 'private, max-age=3600');
-  res.send(Buffer.from(match[2], 'base64'));
-});
-
 router.get('/nodes/:id', async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT n.id, n.sheet_id AS "sheetId", n.parent_id AS "parentId", n.name, n.translation, n.definition, n.image_data AS "image", n.level, n.collapsed,
+    `SELECT n.id, n.sheet_id AS "sheetId", n.parent_id AS "parentId", n.name, n.translation, n.definition, n.image_url AS "imageUrl", n.level, n.collapsed,
       COUNT(c.id)::int AS "childCount"
      FROM nodes n
      LEFT JOIN nodes c ON c.parent_id = n.id
      WHERE n.id = $1
-     GROUP BY n.id, n.sheet_id, n.parent_id, n.name, n.translation, n.definition, n.image_data, n.level, n.collapsed`,
+     GROUP BY n.id, n.sheet_id, n.parent_id, n.name, n.translation, n.definition, n.image_url, n.level, n.collapsed`,
     [req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'not_found' });
@@ -105,7 +95,7 @@ router.post('/sheets/:sheetId/nodes', async (req, res) => {
   const node = {
     id: id(), sheetId: req.params.sheetId, parentId: parentId || null,
     name: (name || 'New Category').trim(), translation: '', definition: '', level,
-    collapsed: false, sortOrder: ord.rows[0].next, hasImage: false, childCount: 0
+    collapsed: false, sortOrder: ord.rows[0].next, imageUrl: null, childCount: 0
   };
   await pool.query(
     `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, level, sort_order)
@@ -117,6 +107,9 @@ router.post('/sheets/:sheetId/nodes', async (req, res) => {
 });
 
 router.patch('/nodes/:id', async (req, res) => {
+  const found = await pool.query('SELECT sheet_id, image_url FROM nodes WHERE id = $1', [req.params.id]);
+  if (!found.rows[0]) return res.status(404).json({ error: 'not_found' });
+
   const allowed = ['name', 'translation', 'definition', 'image', 'collapsed'];
   const sets = [];
   const params = [];
@@ -124,28 +117,52 @@ router.patch('/nodes/:id', async (req, res) => {
   const broadcastPatch = {};
   for (const key of allowed) {
     if (!(key in req.body)) continue;
-    const col = key === 'image' ? 'image_data' : key;
-    sets.push(`${col} = $${n++}`);
+    if (key === 'image') {
+      let url = req.body.image;
+      if (typeof url === 'string' && url.startsWith('data:')) {
+        if (!storage.isConfigured()) {
+          return res.status(400).json({ error: 'not_configured', message: 'Image storage is not configured (missing SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY)' });
+        }
+        url = await storage.uploadImage(req.params.id, url);
+      }
+      if (found.rows[0].image_url && found.rows[0].image_url !== url) {
+        storage.deleteImageByUrl(found.rows[0].image_url).catch(() => {});
+      }
+      sets.push(`image_url = $${n++}`);
+      params.push(url || null);
+      broadcastPatch.imageUrl = url || null;
+      continue;
+    }
+    sets.push(`${key} = $${n++}`);
     params.push(req.body[key]);
-    broadcastPatch[key === 'image' ? 'hasImage' : key] = key === 'image' ? !!req.body[key] : req.body[key];
+    broadcastPatch[key] = req.body[key];
   }
   if (!sets.length) return res.json({ ok: true });
   sets.push('updated_at = now()');
   params.push(req.params.id);
 
-  const found = await pool.query('SELECT sheet_id FROM nodes WHERE id = $1', [req.params.id]);
-  if (!found.rows[0]) return res.status(404).json({ error: 'not_found' });
-
   await pool.query(`UPDATE nodes SET ${sets.join(', ')} WHERE id = $${n}`, params);
   ws.broadcast(found.rows[0].sheet_id, { senderClientId: req.get('X-Client-Id') || null, type: 'node:updated', id: req.params.id, patch: broadcastPatch });
-  res.json({ ok: true });
+  res.json({ ok: true, imageUrl: 'imageUrl' in broadcastPatch ? broadcastPatch.imageUrl : undefined });
 });
 
 router.delete('/nodes/:id', async (req, res) => {
-  const found = await pool.query('SELECT sheet_id, parent_id FROM nodes WHERE id = $1', [req.params.id]);
-  if (!found.rows[0]) return res.status(404).json({ error: 'not_found' });
+  const found = await pool.query(
+    `WITH RECURSIVE subtree AS (
+       SELECT id, image_url FROM nodes WHERE id = $1
+       UNION ALL
+       SELECT n.id, n.image_url FROM nodes AS n JOIN subtree AS s ON n.parent_id = s.id
+     )
+     SELECT image_url FROM subtree WHERE image_url IS NOT NULL`,
+    [req.params.id]
+  );
+  const meta = await pool.query('SELECT sheet_id, parent_id FROM nodes WHERE id = $1', [req.params.id]);
+  if (!meta.rows[0]) return res.status(404).json({ error: 'not_found' });
   await pool.query('DELETE FROM nodes WHERE id = $1', [req.params.id]);
-  ws.broadcast(found.rows[0].sheet_id, { senderClientId: req.get('X-Client-Id') || null, type: 'node:deleted', id: req.params.id, parentId: found.rows[0].parent_id });
+  for (const row of found.rows) {
+    storage.deleteImageByUrl(row.image_url).catch(() => {});
+  }
+  ws.broadcast(meta.rows[0].sheet_id, { senderClientId: req.get('X-Client-Id') || null, type: 'node:deleted', id: req.params.id, parentId: meta.rows[0].parent_id });
   res.json({ ok: true });
 });
 

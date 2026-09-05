@@ -3,6 +3,7 @@ const path = require('path');
 const http = require('http');
 const express = require('express');
 const { migrate } = require('./db');
+const storage = require('./storage');
 const wsHub = require('./ws');
 const sheetsRouter = require('./routes/sheets');
 const nodesRouter = require('./routes/nodes');
@@ -29,6 +30,13 @@ wsHub.attach(server);
 const port = process.env.PORT || 3000;
 
 migrate()
+  .then(() => {
+    if (!storage.isConfigured()) {
+      console.warn('SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY not set -- image uploads will fail until configured.');
+      return;
+    }
+    return storage.ensureBucket();
+  })
   .then(() => {
     server.listen(port, () => console.log('Listening on port ' + port));
   })

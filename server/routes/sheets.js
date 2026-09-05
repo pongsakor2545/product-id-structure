@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { pool } = require('../db');
 const ws = require('../ws');
+const storage = require('../storage');
 
 const patchRouter = require('../wrapAsync');
 const router = patchRouter(express.Router());
@@ -44,16 +45,24 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
     const newSheetId = id();
     const newSheetName = src.name + ' (สำเนา)';
 
+    const idMap = new Map();
+    nodesRes.rows.forEach((n) => idMap.set(n.id, id()));
+    // Copy each image to its own file first (outside the transaction) so the
+    // duplicated sheet doesn't share storage objects with the original --
+    // deleting a node later would otherwise delete the other sheet's image too.
+    const newImageUrls = new Map();
+    await Promise.all(nodesRes.rows.map(async (n) => {
+      if (n.image_url) newImageUrls.set(n.id, await storage.copyImage(n.image_url, idMap.get(n.id)));
+    }));
+
     await client.query('BEGIN');
     await client.query('INSERT INTO sheets (id, name, sort_order) VALUES ($1, $2, $3)', [newSheetId, newSheetName, ordRows[0].next]);
 
-    const idMap = new Map();
-    nodesRes.rows.forEach((n) => idMap.set(n.id, id()));
     for (const n of nodesRes.rows) {
       await client.query(
-        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_data, level, sort_order, collapsed)
+        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, level, sort_order, collapsed)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [idMap.get(n.id), newSheetId, n.parent_id ? idMap.get(n.parent_id) : null, n.name, n.translation, n.definition, n.image_data, n.level, n.sort_order, n.collapsed]
+        [idMap.get(n.id), newSheetId, n.parent_id ? idMap.get(n.parent_id) : null, n.name, n.translation, n.definition, newImageUrls.get(n.id) || null, n.level, n.sort_order, n.collapsed]
       );
     }
     for (const d of drawingsRes.rows) {

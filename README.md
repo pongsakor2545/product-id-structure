@@ -83,6 +83,8 @@ support persistent WebSocket connections. The database itself is Supabase
 3. Once created, go to the web service's **Environment** tab and set:
    - `DATABASE_URL` — your Supabase connection string (see
      [Using Supabase](#using-supabase-instead-of-renders-built-in-postgres) below).
+   - `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — needed for image
+     uploads (see [Image storage](#image-storage-supabase-storage) below).
    - `GOOGLE_SERVICE_ACCOUNT_JSON` — only if you want the Sheets export
      feature (see above).
 4. After the first successful deploy, open a one-off shell for the service
@@ -120,6 +122,26 @@ To use Supabase as the database:
 4. Redeploy. The app creates its tables automatically on first boot (see
    `server/db.js`), so no manual schema setup is needed in Supabase.
 
+### Image storage (Supabase Storage)
+
+Product images are uploaded to **Supabase Storage**, not the database, so
+they use the separate (and larger) 1 GB free-tier "file storage" quota
+instead of the 500 MB "database size" quota — important once you're
+uploading a lot of product photos.
+
+1. In your Supabase project dashboard, go to **Project Settings → API**.
+2. Copy the **Project URL** → set it as `SUPABASE_URL`.
+3. Copy the **`service_role`** secret key (not the `anon` key — it needs
+   write access to create the storage bucket and upload files) → set it as
+   `SUPABASE_SERVICE_ROLE_KEY`.
+4. Set both as environment variables (in `.env` locally, or Render's
+   **Environment** tab once deployed) and restart/redeploy. The app
+   automatically creates a public `product-images` bucket on first boot —
+   no manual bucket setup needed.
+
+Without these two variables set, the app still runs fine — image uploads
+will just show a clear error until they're configured.
+
 ### Pointing your own domain at it
 
 1. Buy a domain if you don't have one — [Cloudflare Registrar](https://www.cloudflare.com/products/registrar/)
@@ -140,9 +162,10 @@ To use Supabase as the database:
 - **No login** — anyone with the link can view and edit everything, matching
   "anyone with the link" from the original request. Add an auth layer if
   that's ever a concern (e.g. a shared password gate, or real accounts).
-- **Images are stored as base64 in Postgres** — fine for moderate use; if
-  image uploads become heavy, move them to S3-compatible storage
-  (Cloudflare R2, Backblaze B2) and store just a URL instead.
+- **Images are stored in Supabase Storage** (see
+  [Image storage](#image-storage-supabase-storage) above), with just the
+  public URL kept in Postgres — scales to a large number of product photos
+  without touching the smaller database-size quota.
 - **Conflict handling is last-writer-wins** at the field level — two people
   editing the exact same field at the exact same moment will have one edit
   win; this matches how the app has behaved throughout this project.
