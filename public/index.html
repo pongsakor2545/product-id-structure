@@ -422,14 +422,40 @@
   }
 
   // ---------- image upload ----------
+  // Resize/compress on the client before upload so more product photos fit
+  // in the storage quota -- caps the longer edge and re-encodes as JPEG
+  // (keeping PNG only when the source needs transparency).
+  function resizeImageFile(file, maxDim, quality) {
+    return new Promise(function (resolve) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var img = new Image();
+        img.onload = function () {
+          var scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          var outW = Math.max(1, Math.round(img.width * scale));
+          var outH = Math.max(1, Math.round(img.height * scale));
+          var canvas = document.createElement('canvas');
+          canvas.width = outW; canvas.height = outH;
+          var ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, outW, outH);
+          var keepPng = file.type === 'image/png' || file.type === 'image/gif';
+          resolve(keepPng ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = function () { resolve(reader.result); };
+        img.src = reader.result;
+      };
+      reader.onerror = function () { resolve(null); };
+      reader.readAsDataURL(file);
+    });
+  }
   function handleImageChange(file) {
     if (!file || !state.selectedId) return;
     var node = nodesById.get(state.selectedId);
-    var reader = new FileReader();
-    reader.onload = function () {
-      node._localImagePreview = reader.result;
+    resizeImageFile(file, 1600, 0.82).then(function (dataUrl) {
+      if (!dataUrl) { showToast('อัปโหลดรูปไม่สำเร็จ'); return; }
+      node._localImagePreview = dataUrl;
       render();
-      api('PATCH', '/api/nodes/' + node.id, { image: reader.result }).then(function (res) {
+      api('PATCH', '/api/nodes/' + node.id, { image: dataUrl }).then(function (res) {
         node._localImagePreview = null;
         node.imageUrl = res.imageUrl || node.imageUrl;
         render();
@@ -438,8 +464,7 @@
         showToast('อัปโหลดรูปไม่สำเร็จ');
         render();
       });
-    };
-    reader.readAsDataURL(file);
+    });
   }
   function imageSrc(node) { return node._localImagePreview || node.imageUrl; }
 
