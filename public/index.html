@@ -127,15 +127,17 @@
 
   .tree { display: flex; flex-direction: column; }
   .row-wrap { display: flex; align-items: stretch; }
-  .guide-col { position: relative; width: 24px; height: 44px; flex-shrink: 0; }
-  .row-content { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; height: 44px; padding: 0 8px 0 2px; border-radius: 8px; cursor: pointer; }
+  .guide-col { position: relative; width: 24px; height: 60px; flex-shrink: 0; }
+  .row-content { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; height: 60px; padding: 0 8px 0 2px; border-radius: 8px; cursor: pointer; }
   .chevron-btn { width: 22px; height: 22px; flex-shrink: 0; border: none; background: transparent; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: var(--text-faint); cursor: pointer; }
   .chevron-btn:hover { background: rgba(120,120,140,0.14); color: var(--text); }
   .chevron-btn svg { transition: transform .12s ease; }
   .chevron-spacer { width: 22px; flex-shrink: 0; }
-  .thumb-img { width: 26px; height: 26px; border-radius: 7px; object-fit: cover; flex-shrink: 0; background: var(--surface-2); }
-  .thumb-fallback { width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 11.5px; font-weight: 700; color: white; font-family: 'Sora', sans-serif; }
+  .thumb-img { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--surface-2); }
+  .thumb-fallback { width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 700; color: white; font-family: 'Sora', sans-serif; }
+  .node-name-stack { display: flex; flex-direction: column; gap: 1px; flex: 0 1 auto; min-width: 0; }
   .node-name { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .node-translation { font-size: 11.5px; color: var(--thai-blue); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .level-badge { font-family: 'Sora', sans-serif; font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 5px; flex-shrink: 0; letter-spacing: 0.02em; }
   .child-count { font-size: 11px; color: var(--text-faint); background: var(--surface-2); border-radius: 5px; padding: 1px 6px; flex-shrink: 0; }
   .row-spacer { flex: 1; min-width: 4px; }
@@ -837,19 +839,20 @@
   }
   function renderTreeRow(row) {
     var node = row.node, colors = colorForLevel(node.level);
-    var guides = row.ancestorLines.map(function (active) { return '<div class="guide-col">' + (active ? '<div style="position:absolute;left:11px;top:0;width:1.5px;height:44px;background:var(--border-strong);"></div>' : '') + '</div>'; }).join('');
-    var elbow = row.depth > 0 ? '<div class="guide-col"><div style="position:absolute;left:11px;top:0;width:1.5px;height:' + (row.isLast ? '22px' : '44px') + ';background:var(--border-strong);"></div><div style="position:absolute;left:11px;top:22px;width:13px;height:1.5px;background:var(--border-strong);"></div></div>' : '';
+    var guides = row.ancestorLines.map(function (active) { return '<div class="guide-col">' + (active ? '<div style="position:absolute;left:11px;top:0;width:1.5px;height:60px;background:var(--border-strong);"></div>' : '') + '</div>'; }).join('');
+    var elbow = row.depth > 0 ? '<div class="guide-col"><div style="position:absolute;left:11px;top:0;width:1.5px;height:' + (row.isLast ? '30px' : '60px') + ';background:var(--border-strong);"></div><div style="position:absolute;left:11px;top:30px;width:13px;height:1.5px;background:var(--border-strong);"></div></div>' : '';
     var chevron = row.hasChildren
       ? '<button class="chevron-btn" data-act="toggle-collapse" data-id="' + node.id + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(' + (node.collapsed ? '0deg' : '90deg') + ')"><path d="M9 6l6 6-6 6"/></svg></button>'
       : '<div class="chevron-spacer"></div>';
     var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
+    var thaiText = (node.translation && node.translation.trim()) ? esc(node.translation) : '<span style="opacity:.45;font-style:italic;">—</span>';
     var childCount = row.hasChildren ? '<span class="child-count">' + node.childCount + '</span>' : '';
     var rowStyle = node.id === state.selectedId ? 'background:var(--primary-tint);' : (node.id === state.dragOverId ? 'background:var(--success-tint);outline:1.5px dashed var(--success-line);outline-offset:-2px;' : '');
     if (node.id === state.draggingId) rowStyle += 'opacity:0.4;';
     return (
       '<div class="row-wrap" draggable="true" data-drag-id="' + node.id + '" data-row-id="' + node.id + '">' + guides + elbow +
       '<div class="row-content" style="' + rowStyle + '" data-act="select-node" data-id="' + node.id + '">' + chevron + thumb +
-      '<span class="node-name">' + esc(node.name) + '</span>' +
+      '<div class="node-name-stack"><span class="node-name">' + esc(node.name) + '</span><span class="node-translation">' + thaiText + '</span></div>' +
       '<span class="level-badge" style="background:' + colors.tintBg + ';color:' + colors.tintText + '">L' + node.level + '</span>' + childCount +
       '<div class="row-spacer"></div>' +
       '<div class="row-actions">' +
