@@ -907,8 +907,8 @@
           mindNodes.push(node);
           maxX = Math.max(maxX, node._px + CARD_W); maxY = Math.max(maxY, node._py + ROW_H / 2);
           if (visibleParent) {
-            var px = visibleParent._px + CARD_W, py = visibleParent._py, cx = node._px, cy = node._py;
-            edges.push({ path: 'M ' + px + ' ' + py + ' L ' + cx + ' ' + cy, stroke: colorForLevel(node.level).solid });
+            var px = visibleParent._px + CARD_W, py = visibleParent._py, cx = node._px, cy = node._py, midX = (px + cx) / 2;
+            edges.push({ path: 'M ' + px + ' ' + py + ' L ' + midX + ' ' + py + ' L ' + midX + ' ' + cy + ' L ' + cx + ' ' + cy, stroke: colorForLevel(node.level).solid });
           }
         }
         var expanded = node.childCount > 0 && !node.collapsed;
