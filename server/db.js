@@ -25,6 +25,7 @@ async function migrate() {
       translation TEXT NOT NULL DEFAULT '',
       definition TEXT NOT NULL DEFAULT '',
       image_url TEXT,
+      definition_color TEXT,
       level INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0,
       collapsed BOOLEAN NOT NULL DEFAULT FALSE,
@@ -69,6 +70,8 @@ async function migrate() {
       END IF;
     END $$;
   `);
+
+  await pool.query(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS definition_color TEXT;`);
 }
 
 module.exports = { pool, migrate };

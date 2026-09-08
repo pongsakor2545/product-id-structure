@@ -23,6 +23,15 @@ router.post('/sheets', async (req, res) => {
   res.json(sheet);
 });
 
+router.post('/sheets/reorder', async (req, res) => {
+  const order = Array.isArray(req.body.order) ? req.body.order : [];
+  for (let i = 0; i < order.length; i++) {
+    await pool.query('UPDATE sheets SET sort_order = $1 WHERE id = $2', [i, order[i]]);
+  }
+  ws.broadcastAll({ senderClientId: req.get('X-Client-Id') || null, type: 'sheet:reordered', order });
+  res.json({ ok: true });
+});
+
 router.patch('/sheets/:id', async (req, res) => {
   const name = (req.body.name || '').trim() || 'ไม่มีชื่อ';
   await pool.query('UPDATE sheets SET name = $1 WHERE id = $2', [name, req.params.id]);
@@ -60,9 +69,9 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
 
     for (const n of nodesRes.rows) {
       await client.query(
-        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, level, sort_order, collapsed)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [idMap.get(n.id), newSheetId, n.parent_id ? idMap.get(n.parent_id) : null, n.name, n.translation, n.definition, newImageUrls.get(n.id) || null, n.level, n.sort_order, n.collapsed]
+        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, level, sort_order, collapsed)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [idMap.get(n.id), newSheetId, n.parent_id ? idMap.get(n.parent_id) : null, n.name, n.translation, n.definition, newImageUrls.get(n.id) || null, n.definition_color, n.level, n.sort_order, n.collapsed]
       );
     }
     for (const d of drawingsRes.rows) {
