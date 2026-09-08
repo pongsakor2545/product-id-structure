@@ -106,6 +106,15 @@
   .share-link-input { flex: 1; height: 32px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface-2); padding: 0 10px; font-size: 12.5px; color: var(--text); }
   .share-hint { font-size: 12px; color: var(--text-muted); margin: 10px 0 0; line-height: 1.5; }
 
+  .modal-overlay { position: fixed; inset: 0; background: rgba(10,10,15,0.5); z-index: 90; display: flex; align-items: center; justify-content: center; }
+  .modal-card { background: var(--surface); border-radius: 14px; box-shadow: var(--shadow-lg); padding: 22px; width: 320px; }
+  .modal-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  .modal-desc { font-size: 12.5px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5; }
+  .modal-input { width: 100%; height: 38px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-2); padding: 0 12px; font-size: 14px; color: var(--text); box-sizing: border-box; }
+  .modal-input.error { border-color: var(--danger); }
+  .modal-error-text { font-size: 12px; color: var(--danger); margin-top: 6px; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+
   .ctx-overlay { position: fixed; inset: 0; z-index: 29; }
   .ctx-menu { padding: 5px; display: flex; flex-direction: column; min-width: 160px; }
   .ctx-item { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 10px; border: none; background: transparent; border-radius: 6px; font-size: 13px; color: var(--text); cursor: pointer; text-align: left; width: 100%; }
@@ -286,6 +295,7 @@
     contextMenuSheetId: null, contextMenuX: 0,
     annoCtx: null,
     lightboxSrc: null,
+    deleteSheetPromptId: null, deleteSheetPasswordInput: '', deleteSheetError: false,
     toast: null
   };
 
@@ -386,6 +396,18 @@
       state.contextMenuSheetId = null;
       if (state.activeSheetId === id) switchSheet(state.sheets[0].id); else render();
     }).catch(function () { showToast('ลบชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); });
+  }
+  function submitDeleteSheetPassword() {
+    if (state.deleteSheetPasswordInput === '1234') {
+      var toDeleteId = state.deleteSheetPromptId;
+      state.deleteSheetPromptId = null;
+      deleteSheet(toDeleteId);
+    } else {
+      state.deleteSheetError = true;
+      render();
+      var pwInput = document.getElementById('deleteSheetPasswordInput');
+      if (pwInput) { pwInput.focus(); pwInput.select(); }
+    }
   }
   function commitRenameSheet() {
     if (!state.renamingSheetId) return;
@@ -1112,6 +1134,17 @@
     if (!state.lightboxSrc) return '';
     return '<div class="lightbox-overlay" data-act="close-lightbox"><button class="lightbox-close" data-act="close-lightbox"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><img class="lightbox-img" src="' + esc(state.lightboxSrc) + '" /></div>';
   }
+  function renderDeleteSheetModal() {
+    if (!state.deleteSheetPromptId) return '';
+    var sh = state.sheets.find(function (s) { return s.id === state.deleteSheetPromptId; });
+    return '<div class="modal-overlay" data-act="cancel-delete-sheet"><div class="modal-card" data-act="stop-propagation">' +
+      '<div class="modal-title">ลบชีท "' + esc(sh ? sh.name : '') + '"?</div>' +
+      '<div class="modal-desc">ใส่รหัสผ่านเพื่อยืนยันการลบ ป้องกันการลบโดยไม่ตั้งใจ</div>' +
+      '<input class="modal-input' + (state.deleteSheetError ? ' error' : '') + '" type="password" id="deleteSheetPasswordInput" data-act="delete-sheet-password" value="' + esc(state.deleteSheetPasswordInput) + '" placeholder="รหัสผ่าน" />' +
+      (state.deleteSheetError ? '<div class="modal-error-text">รหัสผ่านไม่ถูกต้อง</div>' : '') +
+      '<div class="modal-actions"><button class="btn btn-ghost small" data-act="cancel-delete-sheet">ยกเลิก</button><button class="btn btn-primary small" data-act="confirm-delete-sheet" style="background:var(--danger);border-color:var(--danger);">ลบชีท</button></div>' +
+      '</div></div>';
+  }
 
   function renderApp() {
     var prevScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
@@ -1151,12 +1184,15 @@
       (state.shareOpen ? '<div class="share-popover"><div class="share-title">แชร์ผังโครงสร้างนี้</div><div class="share-row"><input class="share-link-input" type="text" readonly value="' + esc(location.href) + '" /><button class="btn btn-primary small" data-act="copy-link">' + (state.copied ? 'คัดลอกแล้ว!' : 'คัดลอกลิงก์') + '</button></div><p class="share-hint">ทุกคนที่มีลิงก์นี้เข้าแก้ไขและเห็นการเปลี่ยนแปลงแบบเรียลไทม์ได้ (ไม่มีระบบล็อกอิน)</p></div>' : '') +
       '</div></div>' +
       '<div class="main">' + (state.viewMode === 'tree' ? renderTreeView() : renderMindView()) + renderPanel() + '</div>' +
-      renderSheetTabs() + renderSheetCtxMenu() + renderAnnoCtxMenu() + renderLightbox() +
+      renderSheetTabs() + renderSheetCtxMenu() + renderAnnoCtxMenu() + renderLightbox() + renderDeleteSheetModal() +
       (state.toast ? '<div class="toast">' + esc(state.toast) + '</div>' : '');
     app.innerHTML = html;
     var newScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
     if (newScrollEl) { newScrollEl.scrollLeft = prevScrollLeft; newScrollEl.scrollTop = prevScrollTop; }
     if (state.renamingSheetId) { var inp = document.getElementById('sheetRenameInput'); if (inp) { inp.focus(); inp.select(); } }
+    if (state.deleteSheetPromptId && document.activeElement !== document.getElementById('deleteSheetPasswordInput')) {
+      var pwInp = document.getElementById('deleteSheetPasswordInput'); if (pwInp) pwInp.focus();
+    }
     var nameTextarea = app.querySelector('textarea.name-input');
     if (nameTextarea) { nameTextarea.style.height = 'auto'; nameTextarea.style.height = nameTextarea.scrollHeight + 'px'; }
     if (activeSelector) {
@@ -1274,6 +1310,7 @@
     }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') state.renameDraft = e.target.value;
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input') myName = e.target.value;
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'delete-sheet-password') { state.deleteSheetPasswordInput = e.target.value; state.deleteSheetError = false; }
   });
 
   app.addEventListener('blur', function (e) {
@@ -1285,6 +1322,10 @@
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input' && e.key === 'Enter') e.target.blur();
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input' && e.key === 'Enter') e.target.blur();
     if (e.target.getAttribute && e.target.getAttribute('data-field') === 'name' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'delete-sheet-password') {
+      if (e.key === 'Enter') submitDeleteSheetPassword();
+      else if (e.key === 'Escape') { state.deleteSheetPromptId = null; render(); }
+    }
   });
   app.addEventListener('focusout', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') commitRenameSheet();
@@ -1349,7 +1390,20 @@
         break;
       }
       case 'sheet-duplicate': if (state.contextMenuSheetId) duplicateSheet(state.contextMenuSheetId); break;
-      case 'sheet-delete': if (state.contextMenuSheetId && state.sheets.length > 1) deleteSheet(state.contextMenuSheetId); break;
+      case 'sheet-delete':
+        if (state.contextMenuSheetId && state.sheets.length > 1) {
+          state.deleteSheetPromptId = state.contextMenuSheetId;
+          state.deleteSheetPasswordInput = '';
+          state.deleteSheetError = false;
+        }
+        state.contextMenuSheetId = null;
+        render();
+        break;
+      case 'cancel-delete-sheet':
+        state.deleteSheetPromptId = null;
+        render();
+        break;
+      case 'confirm-delete-sheet': submitDeleteSheetPassword(); break;
       case 'close-anno-ctx': state.annoCtx = null; render(); break;
       case 'view-image': state.lightboxSrc = el.getAttribute('data-src'); render(); break;
       case 'close-lightbox': state.lightboxSrc = null; render(); break;
