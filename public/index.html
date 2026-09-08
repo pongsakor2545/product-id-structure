@@ -151,9 +151,10 @@
   .panel-body { padding: 18px; display: flex; flex-direction: column; gap: 18px; }
   .field { display: flex; flex-direction: column; gap: 7px; }
   .field label { font-size: 12px; font-weight: 600; color: var(--text-muted); }
-  .field input[type="text"], .field textarea { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font-size: 13.5px; color: var(--text); background: var(--surface); width: 100%; }
-  .field input[type="text"]:focus, .field textarea:focus { outline: 2px solid var(--primary-tint); border-color: var(--primary); }
-  .field textarea { min-height: 76px; resize: none; overflow-y: hidden; line-height: 1.5; }
+  .field input[type="text"], .definition-editable { border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; font-size: 13.5px; color: var(--text); background: var(--surface); width: 100%; }
+  .field input[type="text"]:focus, .definition-editable:focus { outline: 2px solid var(--primary-tint); border-color: var(--primary); }
+  .definition-editable { min-height: 76px; line-height: 1.5; box-sizing: border-box; cursor: text; }
+  .definition-editable:empty:before { content: attr(data-placeholder); color: var(--text-faint); }
   .name-input { font-size: 15.5px !important; font-weight: 600; font-family: 'Sora', 'Noto Sans Thai', sans-serif; }
   .level-row { display: flex; align-items: center; gap: 10px; }
   .muted { font-size: 12.5px; color: var(--text-muted); }
@@ -606,6 +607,14 @@
   // additional level (C = Level 2, D = Level 3, ...). Each level's cell holds
   // the English name with the Thai translation on a second line.
   function colForLevel(level) { return level === 1 ? 1 : level + 1; }
+  // Definitions are stored as rich HTML now (for per-selection text color) --
+  // export wants the plain text a person actually typed, not the markup.
+  function stripHtml(html) {
+    if (!html) return '';
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
+  }
   function collectLeafPaths(ids, ancestors, maxDepthRef) {
     var out = [];
     ids.forEach(function (id) {
@@ -657,7 +666,7 @@
         var continued = merges.some(function (m) { return m.col === col && ri > m.rowStart && ri <= m.rowEnd; });
         if (continued) return;
         out[col - 1] = node.name + (node.translation ? '\n' + node.translation : '');
-        if (l2 === 0) out[1] = node.definition || '';
+        if (l2 === 0) out[1] = stripHtml(node.definition);
       });
       return out;
     });
@@ -867,17 +876,35 @@
     }
     window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
   }
-  function closestAnnotation(node) { var n = node; while (n) { if (n.classList && n.classList.contains('mind-text-annotation')) return n; n = n.parentNode; } return null; }
-  function applyTextColor(color) {
-    var sel = window.getSelection();
-    var anchorEl = sel && sel.anchorNode ? closestAnnotation(sel.anchorNode) : null;
-    if (anchorEl && !sel.isCollapsed) {
-      try { document.execCommand('styleWithCSS', false, true); document.execCommand('foreColor', false, color); } catch (e) {}
-      var id = anchorEl.getAttribute('data-text-id');
-      var t = state.texts.find(function (x) { return x.id === id; });
-      if (t) { t.content = anchorEl.innerHTML; api('PATCH', '/api/texts/' + id, { content: t.content }).catch(function () {}); }
-      return;
+  function closestEditable(node) {
+    var n = node;
+    while (n) {
+      if (n.nodeType === 1 && (n.classList.contains('mind-text-annotation') || n.getAttribute('data-field') === 'definition')) return n;
+      n = n.parentNode;
     }
+    return null;
+  }
+  // Colors just the highlighted portion of a text annotation or the
+  // definition field, like a normal rich-text editor. Returns false (and
+  // does nothing) when there's no active selection inside either -- callers
+  // decide what "no selection" should fall back to.
+  function applySelectionColor(color) {
+    var sel = window.getSelection();
+    var anchorEl = sel && sel.anchorNode ? closestEditable(sel.anchorNode) : null;
+    if (!anchorEl || sel.isCollapsed) return false;
+    try { document.execCommand('styleWithCSS', false, true); document.execCommand('foreColor', false, color); } catch (e) {}
+    var textId = anchorEl.getAttribute('data-text-id');
+    if (textId) {
+      var t = state.texts.find(function (x) { return x.id === textId; });
+      if (t) { t.content = anchorEl.innerHTML; api('PATCH', '/api/texts/' + textId, { content: t.content }).catch(function () {}); }
+    } else if (anchorEl.getAttribute('data-field') === 'definition' && state.selectedId) {
+      var dNode = nodesById.get(state.selectedId);
+      if (dNode) { dNode.definition = anchorEl.innerHTML; api('PATCH', '/api/nodes/' + dNode.id, { definition: dNode.definition }).catch(function () {}); }
+    }
+    return true;
+  }
+  function applyTextColor(color) {
+    if (applySelectionColor(color)) return;
     state.textColor = color; render();
   }
 
@@ -1002,7 +1029,7 @@
     var cardsHtml = layout.mindNodes.map(function (n) { return renderMindCard(n, layout.CARD_H); }).join('');
     var textsHtml = state.texts.map(function (t) {
       var style = 'left:' + t.x + 'px;top:' + t.y + 'px;color:' + t.color + ';font-size:' + t.size + 'px;width:' + t.w + 'px;height:' + t.h + 'px;';
-      return '<div class="mind-text-annotation" contenteditable="true" data-text-id="' + t.id + '" style="' + style + '"></div><div class="mind-resize-handle" data-resize-id="' + t.id + '" style="left:' + (t.x + t.w - 4) + 'px;top:' + (t.y + t.h - 4) + 'px;"></div>';
+      return '<div class="mind-text-annotation" contenteditable="true" data-text-id="' + t.id + '" style="' + style + '">' + (t.content || '') + '</div><div class="mind-resize-handle" data-resize-id="' + t.id + '" style="left:' + (t.x + t.w - 4) + 'px;top:' + (t.y + t.h - 4) + 'px;"></div>';
     }).join('');
     var pointerActive = state.tool === 'pointer', pencilActive = state.tool === 'pencil', textActive = state.tool === 'text';
     return '<div class="mindmap-wrap" id="mindWrap" style="cursor:' + (pencilActive ? 'crosshair' : textActive ? 'text' : 'grab') + '">' +
@@ -1039,9 +1066,9 @@
       '<div class="field"><label>คำนิยาม (Definition)</label>' +
       '<div class="definition-color-row">' +
       '<button class="draw-swatch definition-color-reset' + (!node.definitionColor ? ' active' : '') + '" data-act="definition-color" data-color="" title="สีปกติ">A</button>' +
-      DRAW_PALETTE.map(function (c) { return '<button class="draw-swatch' + (node.definitionColor === c ? ' active' : '') + '" style="background:' + c + ';" data-act="definition-color" data-color="' + c + '"></button>'; }).join('') +
+      DRAW_PALETTE.map(function (c) { return '<button class="draw-swatch' + (node.definitionColor === c ? ' active' : '') + '" style="background:' + c + ';" data-act="definition-color" data-color="' + c + '" title="คลุมข้อความก่อนเพื่อเปลี่ยนเฉพาะจุดที่เลือก"></button>'; }).join('') +
       '</div>' +
-      '<textarea data-field="definition" style="' + (node.definitionColor ? 'color:' + esc(node.definitionColor) + ';' : '') + '" placeholder="อธิบายว่าหมวดหมู่นี้ครอบคลุมสินค้าประเภทใดบ้าง...">' + esc(node.definition) + '</textarea></div>' +
+      '<div class="definition-editable" contenteditable="true" data-field="definition" data-placeholder="อธิบายว่าหมวดหมู่นี้ครอบคลุมสินค้าประเภทใดบ้าง..." style="' + (node.definitionColor ? 'color:' + esc(node.definitionColor) + ';' : '') + '">' + (node.definition || '') + '</div></div>' +
       '<div class="field"><label>คำแปล (ภาษาไทย)</label><input type="text" value="' + esc(node.translation) + '" data-field="translation" placeholder="เช่น สมาร์ทโฟน" /></div>' +
       '<div class="panel-actions"><button class="btn btn-primary" data-act="add-sub"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>เพิ่มหมวดย่อยของหมวดนี้</button><button class="btn btn-danger-ghost" data-act="delete-selected">ลบหมวดหมู่นี้</button></div>' +
       '</div></div>';
@@ -1095,14 +1122,17 @@
     // whole DOM -- which silently drops focus out of a text annotation being
     // typed into, right when app.innerHTML is reassigned below. Capture it here
     // and restore it after, so typing survives a render it didn't cause.
-    var activeTextId = null, activeCaretOffset = null;
+    var activeSelector = null, activeCaretOffset = null;
     var activeEl = document.activeElement;
-    if (activeEl && activeEl.getAttribute && activeEl.getAttribute('data-text-id')) {
-      activeTextId = activeEl.getAttribute('data-text-id');
-      try {
-        var activeSel = window.getSelection();
-        if (activeSel && activeSel.rangeCount) activeCaretOffset = activeSel.getRangeAt(0).startOffset;
-      } catch (e) {}
+    if (activeEl && activeEl.isContentEditable && activeEl.getAttribute) {
+      if (activeEl.getAttribute('data-text-id')) activeSelector = '[data-text-id="' + activeEl.getAttribute('data-text-id') + '"]';
+      else if (activeEl.getAttribute('data-field')) activeSelector = '[data-field="' + activeEl.getAttribute('data-field') + '"]';
+      if (activeSelector) {
+        try {
+          var activeSel = window.getSelection();
+          if (activeSel && activeSel.rangeCount) activeCaretOffset = activeSel.getRangeAt(0).startOffset;
+        } catch (e) {}
+      }
     }
     var others = (state.peers || []).filter(function (p) { return p.clientId !== myClientId; });
     var stackPeople = [{ color: myColor, name: myName }].concat(others);
@@ -1127,10 +1157,8 @@
     var newScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
     if (newScrollEl) { newScrollEl.scrollLeft = prevScrollLeft; newScrollEl.scrollTop = prevScrollTop; }
     if (state.renamingSheetId) { var inp = document.getElementById('sheetRenameInput'); if (inp) { inp.focus(); inp.select(); } }
-    var defTextarea = app.querySelector('textarea[data-field="definition"]');
-    if (defTextarea) { defTextarea.style.height = 'auto'; defTextarea.style.height = defTextarea.scrollHeight + 'px'; }
-    if (activeTextId) {
-      var restoredText = app.querySelector('[data-text-id="' + activeTextId + '"]');
+    if (activeSelector) {
+      var restoredText = app.querySelector(activeSelector);
       if (restoredText) {
         restoredText.focus();
         try {
@@ -1158,7 +1186,7 @@
     if (textEl) { handleTextMouseDown(e, textEl.getAttribute('data-text-id')); return; }
     var drawEl = e.target.closest('[data-draw-id]');
     if (drawEl && canvasEl) { handleDrawMouseDown(e, drawEl.getAttribute('data-draw-id'), canvasEl); return; }
-    if (e.target.closest && e.target.closest('[data-act="text-color"]')) { e.preventDefault(); return; }
+    if (e.target.closest && (e.target.closest('[data-act="text-color"]') || e.target.closest('[data-act="definition-color"]'))) { e.preventDefault(); return; }
     if (!wrapEl || !canvasEl || !wrapEl.contains(e.target)) return;
     if (!isBackgroundTarget(e, wrapEl, canvasEl)) return;
     if (state.selectedId) {
@@ -1219,6 +1247,12 @@
   app.addEventListener('input', function (e) {
     var field = e.target.getAttribute && e.target.getAttribute('data-field');
     if (field) {
+      if (e.target.isContentEditable) {
+        // renderApp() itself captures/restores focus+caret for contenteditable
+        // fields on every render, so no manual restore needed here.
+        updateSelected(field, e.target.innerHTML);
+        return;
+      }
       updateSelected(field, e.target.value);
       var selStart = e.target.selectionStart, selEnd = e.target.selectionEnd, restored = app.querySelector('[data-field="' + field + '"]');
       if (restored && restored !== e.target) { restored.focus(); if (typeof selStart === 'number' && restored.setSelectionRange) { try { restored.setSelectionRange(selStart, selEnd); } catch (er) {} } }
@@ -1327,6 +1361,7 @@
       case 'pencil-color': state.pencilColor = el.getAttribute('data-color'); render(); break;
       case 'definition-color': {
         var defColor = el.getAttribute('data-color') || null;
+        if (defColor && applySelectionColor(defColor)) break;
         var defNode = state.selectedId ? nodesById.get(state.selectedId) : null;
         if (defNode) {
           defNode.definitionColor = defColor;
