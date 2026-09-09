@@ -10,14 +10,14 @@ const router = patchRouter(express.Router());
 function id() { return crypto.randomUUID(); }
 
 router.get('/sheets', async (req, res) => {
-  const { rows } = await pool.query('SELECT id, name, sort_order AS "sortOrder" FROM sheets ORDER BY sort_order ASC');
+  const { rows } = await pool.query('SELECT id, name, sort_order AS "sortOrder", color FROM sheets ORDER BY sort_order ASC');
   res.json(rows);
 });
 
 router.post('/sheets', async (req, res) => {
   const name = (req.body.name || 'ชีทใหม่').trim();
   const { rows } = await pool.query('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM sheets');
-  const sheet = { id: id(), name, sortOrder: rows[0].next };
+  const sheet = { id: id(), name, sortOrder: rows[0].next, color: null };
   await pool.query('INSERT INTO sheets (id, name, sort_order) VALUES ($1, $2, $3)', [sheet.id, sheet.name, sheet.sortOrder]);
   ws.broadcastAll({ senderClientId: req.get('X-Client-Id') || null, type: 'sheet:created', sheet });
   res.json(sheet);
@@ -33,9 +33,22 @@ router.post('/sheets/reorder', async (req, res) => {
 });
 
 router.patch('/sheets/:id', async (req, res) => {
-  const name = (req.body.name || '').trim() || 'ไม่มีชื่อ';
-  await pool.query('UPDATE sheets SET name = $1 WHERE id = $2', [name, req.params.id]);
-  ws.broadcastAll({ senderClientId: req.get('X-Client-Id') || null, type: 'sheet:renamed', id: req.params.id, name });
+  const sets = [];
+  const params = [];
+  let n = 1;
+  const patch = {};
+  if ('name' in req.body) {
+    const name = (req.body.name || '').trim() || 'ไม่มีชื่อ';
+    sets.push(`name = $${n++}`); params.push(name); patch.name = name;
+  }
+  if ('color' in req.body) {
+    const color = req.body.color || null;
+    sets.push(`color = $${n++}`); params.push(color); patch.color = color;
+  }
+  if (!sets.length) return res.json({ ok: true });
+  params.push(req.params.id);
+  await pool.query(`UPDATE sheets SET ${sets.join(', ')} WHERE id = $${n}`, params);
+  ws.broadcastAll({ senderClientId: req.get('X-Client-Id') || null, type: 'sheet:updated', id: req.params.id, patch });
   res.json({ ok: true });
 });
 
@@ -65,7 +78,7 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
     }));
 
     await client.query('BEGIN');
-    await client.query('INSERT INTO sheets (id, name, sort_order) VALUES ($1, $2, $3)', [newSheetId, newSheetName, ordRows[0].next]);
+    await client.query('INSERT INTO sheets (id, name, sort_order, color) VALUES ($1, $2, $3, $4)', [newSheetId, newSheetName, ordRows[0].next, src.color]);
 
     for (const n of nodesRes.rows) {
       await client.query(
@@ -82,7 +95,7 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
     }
     await client.query('COMMIT');
 
-    const sheet = { id: newSheetId, name: newSheetName, sortOrder: ordRows[0].next };
+    const sheet = { id: newSheetId, name: newSheetName, sortOrder: ordRows[0].next, color: src.color };
     ws.broadcastAll({ senderClientId: req.get('X-Client-Id') || null, type: 'sheet:created', sheet });
     res.json(sheet);
   } catch (err) {

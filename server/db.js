@@ -14,7 +14,8 @@ async function migrate() {
     CREATE TABLE IF NOT EXISTS sheets (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      sort_order INTEGER NOT NULL
+      sort_order INTEGER NOT NULL,
+      color TEXT
     );
 
     CREATE TABLE IF NOT EXISTS nodes (
@@ -72,6 +73,7 @@ async function migrate() {
   `);
 
   await pool.query(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS definition_color TEXT;`);
+  await pool.query(`ALTER TABLE sheets ADD COLUMN IF NOT EXISTS color TEXT;`);
 
   // Powers the "find which category this belongs in" search: trigram
   // indexes let a query match close-but-not-exact wording (typos, slightly
