@@ -752,7 +752,9 @@
   // Column layout: A = Level 1, B = Level 1 definition, then one column per
   // additional level (C = Level 2, D = Level 3, ...). Each level's cell holds
   // the English name with the Thai translation on a second line.
-  function colForLevel(level) { return level === 1 ? 1 : level + 1; }
+  // Each level gets 2 columns: its name/translation, then its definition.
+  function colForLevel(level) { return (level - 1) * 2 + 1; }
+  function defColForLevel(level) { return colForLevel(level) + 1; }
   // Definitions are stored as rich HTML now (for per-selection text color) --
   // export wants the plain text a person actually typed, not the markup.
   function stripHtml(html) {
@@ -776,10 +778,10 @@
     var maxDepthRef = { value: 1 };
     var leafPaths = collectLeafPaths(rootIds, [], maxDepthRef);
     var maxDepth = maxDepthRef.value;
-    var totalCols = maxDepth + 1;
+    var totalCols = maxDepth * 2;
 
-    var header = ['Level 1', 'คำนิยาม Level 1'];
-    for (var lvl = 2; lvl <= maxDepth; lvl++) header.push('Level ' + lvl);
+    var header = [];
+    for (var lvl = 1; lvl <= maxDepth; lvl++) { header.push('Level ' + lvl); header.push('คำนิยาม Level ' + lvl); }
 
     var rawRows = leafPaths.map(function (path) {
       var row = [];
@@ -796,9 +798,8 @@
         var j = i;
         while (j + 1 < rawRows.length && rawRows[j + 1][l2] && rawRows[j + 1][l2].id === node.id) j++;
         if (j > i) {
-          var col = colForLevel(l2 + 1);
-          merges.push({ col: col, rowStart: i, rowEnd: j });
-          if (l2 === 0) merges.push({ col: 2, rowStart: i, rowEnd: j });
+          merges.push({ col: colForLevel(l2 + 1), rowStart: i, rowEnd: j });
+          merges.push({ col: defColForLevel(l2 + 1), rowStart: i, rowEnd: j });
         }
         i = j + 1;
       }
@@ -812,7 +813,7 @@
         var continued = merges.some(function (m) { return m.col === col && ri > m.rowStart && ri <= m.rowEnd; });
         if (continued) return;
         out[col - 1] = node.name + (node.translation ? '\n' + node.translation : '');
-        if (l2 === 0) out[1] = stripHtml(node.definition);
+        out[defColForLevel(l2 + 1) - 1] = stripHtml(node.definition);
       });
       return out;
     });
