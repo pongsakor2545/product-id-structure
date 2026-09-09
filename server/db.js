@@ -72,6 +72,22 @@ async function migrate() {
   `);
 
   await pool.query(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS definition_color TEXT;`);
+
+  // Powers the "find which category this belongs in" search: trigram
+  // indexes let a query match close-but-not-exact wording (typos, slightly
+  // different phrasing) in addition to plain substring matches -- no
+  // external API/cost, just built-in Postgres. Guarded because a locked
+  // -down host might not allow CREATE EXTENSION; the app still works with
+  // plain ILIKE search if this fails.
+  try {
+    await pool.query(`
+      CREATE EXTENSION IF NOT EXISTS pg_trgm;
+      CREATE INDEX IF NOT EXISTS idx_nodes_name_trgm ON nodes USING gin (name gin_trgm_ops);
+      CREATE INDEX IF NOT EXISTS idx_nodes_translation_trgm ON nodes USING gin (translation gin_trgm_ops);
+    `);
+  } catch (err) {
+    console.warn('pg_trgm not available -- falling back to plain substring search:', err.message);
+  }
 }
 
 module.exports = { pool, migrate };

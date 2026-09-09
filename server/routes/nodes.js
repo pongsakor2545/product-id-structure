@@ -57,14 +57,42 @@ router.get('/nodes/:id/ancestors', async (req, res) => {
 });
 
 router.get('/sheets/:sheetId/search', async (req, res) => {
-  const q = '%' + String(req.query.q || '').trim() + '%';
-  if (q === '%%') return res.json([]);
-  const { rows } = await pool.query(
-    `SELECT id, name, translation, level FROM nodes
-     WHERE sheet_id = $1 AND (name ILIKE $2 OR translation ILIKE $2)
-     ORDER BY name ASC LIMIT 50`,
-    [req.params.sheetId, q]
-  );
+  const raw = String(req.query.q || '').trim();
+  if (!raw) return res.json([]);
+  const like = '%' + raw + '%';
+  // Matches plain substrings (name/translation/definition, HTML stripped)
+  // and also close-but-not-exact wording via trigram similarity -- no
+  // external API, so this costs nothing beyond the database query itself.
+  // Falls back to plain substring matching if pg_trgm didn't get installed
+  // (e.g. insufficient privileges on some hosts) rather than erroring out.
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT id, name, translation, level,
+         GREATEST(
+           similarity(name, $2),
+           similarity(translation, $2),
+           similarity(regexp_replace(definition, '<[^>]*>', '', 'g'), $2)
+         ) AS score
+       FROM nodes
+       WHERE sheet_id = $1
+         AND (
+           name ILIKE $3 OR translation ILIKE $3 OR regexp_replace(definition, '<[^>]*>', '', 'g') ILIKE $3
+           OR similarity(name, $2) > 0.2
+           OR similarity(translation, $2) > 0.2
+         )
+       ORDER BY score DESC
+       LIMIT 15`,
+      [req.params.sheetId, raw, like]
+    ));
+  } catch (err) {
+    ({ rows } = await pool.query(
+      `SELECT id, name, translation, level FROM nodes
+       WHERE sheet_id = $1 AND (name ILIKE $2 OR translation ILIKE $2 OR regexp_replace(definition, '<[^>]*>', '', 'g') ILIKE $2)
+       ORDER BY name ASC LIMIT 15`,
+      [req.params.sheetId, like]
+    ));
+  }
   for (const r of rows) {
     const anc = await pool.query(
       `WITH RECURSIVE a AS (
