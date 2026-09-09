@@ -27,6 +27,7 @@ async function migrate() {
       definition TEXT NOT NULL DEFAULT '',
       image_url TEXT,
       definition_color TEXT,
+      needs_review BOOLEAN NOT NULL DEFAULT FALSE,
       level INTEGER NOT NULL DEFAULT 1,
       sort_order INTEGER NOT NULL DEFAULT 0,
       collapsed BOOLEAN NOT NULL DEFAULT FALSE,
@@ -74,6 +75,7 @@ async function migrate() {
 
   await pool.query(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS definition_color TEXT;`);
   await pool.query(`ALTER TABLE sheets ADD COLUMN IF NOT EXISTS color TEXT;`);
+  await pool.query(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS needs_review BOOLEAN NOT NULL DEFAULT FALSE;`);
 
   // Powers the "find which category this belongs in" search: trigram
   // indexes let a query match close-but-not-exact wording (typos, slightly

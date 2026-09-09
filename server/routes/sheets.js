@@ -82,9 +82,9 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
 
     for (const n of nodesRes.rows) {
       await client.query(
-        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, level, sort_order, collapsed)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [idMap.get(n.id), newSheetId, n.parent_id ? idMap.get(n.parent_id) : null, n.name, n.translation, n.definition, newImageUrls.get(n.id) || null, n.definition_color, n.level, n.sort_order, n.collapsed]
+        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, level, sort_order, collapsed)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [idMap.get(n.id), newSheetId, n.parent_id ? idMap.get(n.parent_id) : null, n.name, n.translation, n.definition, newImageUrls.get(n.id) || null, n.definition_color, n.needs_review, n.level, n.sort_order, n.collapsed]
       );
     }
     for (const d of drawingsRes.rows) {

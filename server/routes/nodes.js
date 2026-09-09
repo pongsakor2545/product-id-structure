@@ -11,12 +11,12 @@ function id() { return crypto.randomUUID(); }
 
 const LIST_SELECT = `
   SELECT n.id, n.name, n.translation, n.definition, n.level, n.collapsed,
-    n.image_url AS "imageUrl", n.definition_color AS "definitionColor",
+    n.image_url AS "imageUrl", n.definition_color AS "definitionColor", n.needs_review AS "needsReview",
     COUNT(c.id)::int AS "childCount"
   FROM nodes n
   LEFT JOIN nodes c ON c.parent_id = n.id
 `;
-const LIST_GROUP_ORDER = 'GROUP BY n.id, n.name, n.translation, n.definition, n.level, n.collapsed, n.image_url, n.definition_color, n.sort_order ORDER BY n.sort_order ASC';
+const LIST_GROUP_ORDER = 'GROUP BY n.id, n.name, n.translation, n.definition, n.level, n.collapsed, n.image_url, n.definition_color, n.needs_review, n.sort_order ORDER BY n.sort_order ASC';
 
 router.get('/sheets/:sheetId/nodes', async (req, res) => {
   const isRoot = !req.query.parent || req.query.parent === 'root';
@@ -31,12 +31,12 @@ router.get('/sheets/:sheetId/nodes', async (req, res) => {
 
 router.get('/nodes/:id', async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT n.id, n.sheet_id AS "sheetId", n.parent_id AS "parentId", n.name, n.translation, n.definition, n.image_url AS "imageUrl", n.definition_color AS "definitionColor", n.level, n.collapsed,
+    `SELECT n.id, n.sheet_id AS "sheetId", n.parent_id AS "parentId", n.name, n.translation, n.definition, n.image_url AS "imageUrl", n.definition_color AS "definitionColor", n.needs_review AS "needsReview", n.level, n.collapsed,
       COUNT(c.id)::int AS "childCount"
      FROM nodes n
      LEFT JOIN nodes c ON c.parent_id = n.id
      WHERE n.id = $1
-     GROUP BY n.id, n.sheet_id, n.parent_id, n.name, n.translation, n.definition, n.image_url, n.definition_color, n.level, n.collapsed`,
+     GROUP BY n.id, n.sheet_id, n.parent_id, n.name, n.translation, n.definition, n.image_url, n.definition_color, n.needs_review, n.level, n.collapsed`,
     [req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'not_found' });
@@ -123,7 +123,7 @@ router.post('/sheets/:sheetId/nodes', async (req, res) => {
   const node = {
     id: id(), sheetId: req.params.sheetId, parentId: parentId || null,
     name: (name || 'New Category').trim(), translation: '', definition: '', level,
-    collapsed: false, sortOrder: ord.rows[0].next, imageUrl: null, childCount: 0
+    collapsed: false, sortOrder: ord.rows[0].next, imageUrl: null, needsReview: false, childCount: 0
   };
   await pool.query(
     `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, level, sort_order)
@@ -138,8 +138,8 @@ router.patch('/nodes/:id', async (req, res) => {
   const found = await pool.query('SELECT sheet_id, image_url FROM nodes WHERE id = $1', [req.params.id]);
   if (!found.rows[0]) return res.status(404).json({ error: 'not_found' });
 
-  const allowed = ['name', 'translation', 'definition', 'image', 'collapsed', 'definitionColor'];
-  const columnFor = { definitionColor: 'definition_color' };
+  const allowed = ['name', 'translation', 'definition', 'image', 'collapsed', 'definitionColor', 'needsReview'];
+  const columnFor = { definitionColor: 'definition_color', needsReview: 'needs_review' };
   const sets = [];
   const params = [];
   let n = 1;
