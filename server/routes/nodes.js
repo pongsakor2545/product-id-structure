@@ -18,6 +18,11 @@ const LIST_SELECT = `
 `;
 const LIST_GROUP_ORDER = 'GROUP BY n.id, n.name, n.translation, n.definition, n.level, n.collapsed, n.image_url, n.definition_color, n.sort_order ORDER BY n.sort_order ASC';
 
+router.get('/sheets/:sheetId/node-count', async (req, res) => {
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS count FROM nodes WHERE sheet_id = $1', [req.params.sheetId]);
+  res.json({ count: rows[0].count });
+});
+
 router.get('/sheets/:sheetId/nodes', async (req, res) => {
   const isRoot = !req.query.parent || req.query.parent === 'root';
   const params = isRoot ? [req.params.sheetId] : [req.params.sheetId, req.query.parent];
