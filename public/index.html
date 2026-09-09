@@ -330,7 +330,7 @@
     lightboxSrc: null,
     deleteSheetPromptId: null, deleteSheetPasswordInput: '', deleteSheetError: false,
     chatOpen: false, chatMessages: [], chatInput: '', chatBusy: false,
-    bootProgress: 0, bootReady: false, totalNodeCount: 0,
+    bootProgress: 0, bootReady: false, loadBurstTotal: 0, loadBurstDone: 0,
     toast: null
   };
 
@@ -352,12 +352,25 @@
     var node = nodesById.get(nodeId);
     if (!node || node.childrenLoaded || pendingFetches.has(nodeId)) return;
     pendingFetches.add(nodeId);
+    // Tracks progress for the *current wave* of background fetches, not the
+    // sheet's grand total -- a collapsed branch is never supposed to load
+    // until someone expands it, so counting it against the total would leave
+    // the percentage permanently stuck below 100 forever.
+    if (state.loadBurstTotal === state.loadBurstDone) { state.loadBurstTotal = 0; state.loadBurstDone = 0; }
+    state.loadBurstTotal++;
     api('GET', '/api/sheets/' + state.activeSheetId + '/nodes?parent=' + encodeURIComponent(nodeId)).then(function (children) {
       node.childrenIds = children.map(function (c) { nodesById.set(c.id, toCacheNode(c, nodeId)); return c.id; });
       node.childrenLoaded = true;
       pendingFetches.delete(nodeId);
+      state.loadBurstDone++;
+      if (pendingFetches.size === 0) { state.loadBurstTotal = 0; state.loadBurstDone = 0; }
       scheduleBackgroundRender();
-    }).catch(function () { pendingFetches.delete(nodeId); });
+    }).catch(function () {
+      pendingFetches.delete(nodeId);
+      state.loadBurstDone++;
+      if (pendingFetches.size === 0) { state.loadBurstTotal = 0; state.loadBurstDone = 0; }
+      scheduleBackgroundRender();
+    });
   }
   // Expands every ancestor in order (loading whatever isn't cached yet) so a
   // node found via search/chat becomes visible, then selects and scrolls to it.
@@ -422,17 +435,11 @@
     node.childrenIds.slice().forEach(removeFromCache);
     nodesById.delete(id);
   }
-  function countLoadedDescendants(ids) {
-    var n = ids.length;
-    ids.forEach(function (id) { var node = nodesById.get(id); if (node && node.childrenLoaded) n += countLoadedDescendants(node.childrenIds); });
-    return n;
-  }
-  // How much of the active sheet's total node count is cached client-side so
-  // far -- background loading (see ensureChildrenLoaded) keeps fetching more
-  // levels as long as this is under 100.
+  // Progress of the current wave of background fetches (see
+  // ensureChildrenLoaded); 100 whenever nothing is in flight.
   function loadPercent() {
-    if (!state.totalNodeCount) return 100;
-    return Math.min(100, Math.round(countLoadedDescendants(state.rootIds) / state.totalNodeCount * 100));
+    if (state.loadBurstTotal === 0) return 100;
+    return Math.min(100, Math.round(state.loadBurstDone / state.loadBurstTotal * 100));
   }
   // Many branches can finish loading within milliseconds of each other; a
   // full re-render per completion was frequent enough to intermittently eat
@@ -465,10 +472,9 @@
   function switchSheet(id) {
     if (id === state.activeSheetId) return Promise.resolve();
     state.activeSheetId = id; state.selectedId = null; state.draggingId = null; state.dragOverId = null;
-    state.rootIds = []; state.totalNodeCount = 0;
+    state.rootIds = []; state.loadBurstTotal = 0; state.loadBurstDone = 0;
     wsSend({ type: 'join', sheetId: id, name: myName, color: myColor, clientId: myClientId });
     render();
-    api('GET', '/api/sheets/' + id + '/node-count').then(function (r) { state.totalNodeCount = r.count; render(); }).catch(function () {});
     return Promise.all([
       api('GET', '/api/sheets/' + id + '/nodes?parent=root'),
       api('GET', '/api/sheets/' + id + '/drawings'),
