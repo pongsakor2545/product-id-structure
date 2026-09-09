@@ -73,9 +73,10 @@
   .brand { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .brand-title { font-family: 'Sora', 'Noto Sans Thai', sans-serif; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
   .brand-sub { font-size: 12.5px; color: var(--text-muted); }
-  .load-badge { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-faint); margin-top: 2px; }
-  .load-badge-spinner { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); animation: load-badge-pulse 1s ease-in-out infinite; flex-shrink: 0; }
-  @keyframes load-badge-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+  .load-progress-float { position: fixed; top: 78px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 9px 18px; box-shadow: var(--shadow-md); display: flex; align-items: center; gap: 10px; pointer-events: none; }
+  .load-progress-text { font-size: 12px; color: var(--text-muted); white-space: nowrap; font-family: 'Sora', sans-serif; font-weight: 600; }
+  .load-progress-track { width: 100px; height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  .load-progress-fill { height: 100%; background: var(--primary); border-radius: 999px; transition: width 0.3s ease; }
   .topbar-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; position: relative; flex-wrap: wrap; justify-self: end; }
 
   .btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 13.5px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: background .12s ease, border-color .12s ease; }
@@ -1284,6 +1285,11 @@
       '<button class="chat-send-btn" data-act="send-chat"' + (state.chatBusy ? ' disabled' : '') + '><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg></button></div>' +
       '</div>';
   }
+  function renderLoadProgress() {
+    var lp = loadPercent();
+    if (lp >= 100) return '';
+    return '<div class="load-progress-float"><div class="load-progress-text">โหลดข้อมูล ' + lp + '%</div><div class="load-progress-track"><div class="load-progress-fill" style="width:' + lp + '%"></div></div></div>';
+  }
   function renderBootScreen() {
     var pct = Math.max(0, Math.min(100, Math.round(state.bootProgress)));
     return '<div class="boot-screen"><div class="boot-card">' +
@@ -1321,9 +1327,8 @@
     var avatarsHtml = stackPeople.slice(0, 4).map(function (p) { return '<div class="avatar" style="background:' + esc(p.color || '#888') + '" title="' + esc(p.name || 'Guest') + '">' + esc(initialOf(p.name)) + '</div>'; }).join('') + (stackPeople.length > 4 ? '<div class="avatar more">+' + (stackPeople.length - 4) + '</div>' : '');
     var onlineCount = others.length + 1;
     var lp = loadPercent();
-    var loadBadge = lp < 100 ? '<div class="load-badge" title="กำลังโหลดหมวดหมู่ในระดับที่ลึกกว่านี้ เพิ่มหมวด/พิมพ์ข้อความได้ตามปกติ"><span class="load-badge-spinner"></span>โหลดข้อมูล ' + lp + '%</div>' : '';
     var html = '<div class="topbar">' +
-      '<div class="topbar-left"><div class="brand"><div class="brand-title">โครงสร้าง Product ID</div><div class="brand-sub"><span class="conn-dot ' + (state.wsConnected ? 'on' : 'off') + '"></span>' + (state.wsConnected ? onlineCount + ' คนออนไลน์' : 'ขาดการเชื่อมต่อ กำลังลองใหม่...') + '</div>' + loadBadge + '</div>' +
+      '<div class="topbar-left"><div class="brand"><div class="brand-title">โครงสร้าง Product ID</div><div class="brand-sub"><span class="conn-dot ' + (state.wsConnected ? 'on' : 'off') + '"></span>' + (state.wsConnected ? onlineCount + ' คนออนไลน์' : 'ขาดการเชื่อมต่อ กำลังลองใหม่...') + '</div></div>' +
       '<div class="view-toggle">' +
       '<button class="view-toggle-btn' + (state.viewMode === 'tree' ? ' active' : '') + '" data-act="set-view" data-view="tree"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>มุมมองรายการ</button>' +
       '<button class="view-toggle-btn' + (state.viewMode === 'mind' ? ' active' : '') + '" data-act="set-view" data-view="mind"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="12" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.2 11.3L15.8 6.7M7.4 12h8.2M7.2 12.7l8.6 4.6"/></svg>มุมมองผัง</button></div>' +
@@ -1338,7 +1343,7 @@
       (state.shareOpen ? '<div class="share-popover"><div class="share-title">แชร์ผังโครงสร้างนี้</div><div class="share-row"><input class="share-link-input" type="text" readonly value="' + esc(location.href) + '" /><button class="btn btn-primary small" data-act="copy-link">' + (state.copied ? 'คัดลอกแล้ว!' : 'คัดลอกลิงก์') + '</button></div><p class="share-hint">ทุกคนที่มีลิงก์นี้เข้าแก้ไขและเห็นการเปลี่ยนแปลงแบบเรียลไทม์ได้ (ไม่มีระบบล็อกอิน)</p></div>' : '') +
       '</div></div>' +
       '<div class="main">' + (state.viewMode === 'tree' ? renderTreeView() : renderMindView()) + renderPanel() + '</div>' +
-      renderSheetTabs() + renderSheetCtxMenu() + renderAnnoCtxMenu() + renderLightbox() + renderDeleteSheetModal() + renderChatPanel() +
+      renderSheetTabs() + renderSheetCtxMenu() + renderAnnoCtxMenu() + renderLightbox() + renderDeleteSheetModal() + renderChatPanel() + renderLoadProgress() +
       (state.toast ? '<div class="toast">' + esc(state.toast) + '</div>' : '');
     app.innerHTML = html;
     var newScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
