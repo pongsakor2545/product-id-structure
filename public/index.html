@@ -83,6 +83,8 @@
   .btn { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 13.5px; font-weight: 500; cursor: pointer; white-space: nowrap; transition: background .12s ease, border-color .12s ease; }
   .btn:hover { background: var(--surface-2); }
   .btn.small { height: 30px; padding: 0 10px; font-size: 12.5px; }
+  .btn.icon-only { width: 36px; padding: 0; justify-content: center; }
+  .btn:disabled { opacity: .4; cursor: default; pointer-events: none; }
   .btn-primary { background: var(--primary); border-color: var(--primary); color: white; }
   .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
   .btn-ghost { background: transparent; border-color: transparent; }
@@ -324,6 +326,14 @@
   var pendingFetches = new Set();
   var patchTimers = {};
   var toastTimer = null;
+  // Local-only undo/redo: plain arrays of {undo, redo} closures, pushed only
+  // by actions THIS client initiated. Incoming WebSocket broadcasts from
+  // other collaborators never touch these stacks, so Back/Forward can only
+  // ever replay this browser's own history -- never another peer's edits.
+  var undoStack = [];
+  var redoStack = [];
+  var UNDO_LIMIT = 50;
+  var fieldEditSnapshot = null; // {nodeId, field, before} for the in-progress edit session of a name/translation/definition field
 
   var state = {
     sheets: [], activeSheetId: null, rootIds: [],
@@ -461,6 +471,70 @@
     backgroundRenderTimer = setTimeout(function () { backgroundRenderTimer = null; render(); }, 60);
   }
 
+  // ---------- undo/redo (local only, see undoStack comment above) ----------
+  function pushUndo(entry) {
+    undoStack.push(entry);
+    if (undoStack.length > UNDO_LIMIT) undoStack.shift();
+    redoStack = [];
+    render();
+  }
+  function performUndo() {
+    var entry = undoStack.pop();
+    if (!entry) return;
+    redoStack.push(entry);
+    entry.undo();
+    render();
+  }
+  function performRedo() {
+    var entry = redoStack.pop();
+    if (!entry) return;
+    undoStack.push(entry);
+    entry.redo();
+    render();
+  }
+  // Recursively fetches every not-yet-loaded descendant of id, so a delete's
+  // undo snapshot can capture the whole subtree even if parts of it were
+  // never expanded/viewed in this session.
+  function ensureSubtreeLoaded(id) {
+    var node = nodesById.get(id); if (!node) return Promise.resolve();
+    if (node.childrenLoaded) return Promise.all(node.childrenIds.map(ensureSubtreeLoaded));
+    return api('GET', '/api/sheets/' + state.activeSheetId + '/nodes?parent=' + encodeURIComponent(id)).then(function (children) {
+      node.childrenIds = children.map(function (c) { nodesById.set(c.id, toCacheNode(c, id)); return c.id; });
+      node.childrenLoaded = true;
+      return Promise.all(node.childrenIds.map(ensureSubtreeLoaded));
+    });
+  }
+  function snapshotSubtree(id) {
+    var node = nodesById.get(id); if (!node) return null;
+    return {
+      id: node.id, name: node.name, translation: node.translation, definition: node.definition,
+      definitionColor: node.definitionColor, needsReview: node.needsReview, level: node.level, collapsed: node.collapsed,
+      children: (node.childrenIds || []).map(snapshotSubtree).filter(Boolean)
+    };
+  }
+  // Recreates a deleted subtree from a snapshot, reusing each node's original
+  // id (the /restore endpoint accepts a client-chosen id) so a later redo of
+  // the same delete can target the exact same id again. Images are NOT
+  // restored: the server permanently removes the image file from storage at
+  // delete time, before undo is even possible, so the old image URL would
+  // just point at nothing -- a disclosed limitation of this feature.
+  function restoreSubtree(snapshot, parentId) {
+    if (!snapshot) return Promise.resolve();
+    return api('POST', '/api/sheets/' + state.activeSheetId + '/nodes/restore', {
+      id: snapshot.id, parentId: parentId, name: snapshot.name, translation: snapshot.translation,
+      definition: snapshot.definition, definitionColor: snapshot.definitionColor, needsReview: snapshot.needsReview,
+      level: snapshot.level, collapsed: snapshot.collapsed
+    }).then(function (node) {
+      nodesById.set(node.id, toCacheNode(node, parentId));
+      attachToParent(node.id, parentId);
+      return Promise.all(snapshot.children.map(function (child) { return restoreSubtree(child, node.id); })).then(function () {
+        var cached = nodesById.get(node.id);
+        cached.childrenLoaded = true;
+        cached.childrenIds = snapshot.children.map(function (c) { return c.id; });
+      });
+    });
+  }
+
   // ---------- sheets ----------
   function loadSheetsList() {
     state.bootProgress = 15; render();
@@ -567,6 +641,12 @@
       if (state.selectedId === tempId) state.selectedId = node.id;
       render();
       scrollNodeIntoView(node.id);
+      pushUndo({
+        undo: function () { deleteNodeRaw(node.id).then(render); },
+        redo: function () {
+          restoreSubtree({ id: node.id, name: node.name, translation: node.translation, definition: node.definition, definitionColor: null, needsReview: false, level: node.level, collapsed: false, children: [] }, parentId).then(render);
+        }
+      });
     }).catch(function () {
       removeFromCache(tempId);
       if (state.selectedId === tempId) state.selectedId = null;
@@ -599,12 +679,32 @@
     var el = app.querySelector('.chat-messages');
     if (el) el.scrollTop = el.scrollHeight;
   }
-  function deleteNode(id) {
-    api('DELETE', '/api/nodes/' + id).then(function () {
+  function deleteNodeRaw(id) {
+    return api('DELETE', '/api/nodes/' + id).then(function () {
       removeFromCache(id);
       if (state.selectedId === id) state.selectedId = null;
-      render();
+    });
+  }
+  function deleteNode(id) {
+    var node = nodesById.get(id); if (!node) return;
+    var parentId = node.parentId;
+    ensureSubtreeLoaded(id).then(function () {
+      var snapshot = snapshotSubtree(id);
+      return deleteNodeRaw(id).then(function () {
+        render();
+        pushUndo({
+          undo: function () { restoreSubtree(snapshot, parentId).then(render); },
+          redo: function () { deleteNodeRaw(id).then(render); }
+        });
+      });
     }).catch(function () { showToast('ลบหมวดหมู่ไม่สำเร็จ ลองใหม่อีกครั้ง'); });
+  }
+  function setNodeField(nodeId, field, value) {
+    var node = nodesById.get(nodeId); if (!node) return;
+    node[field] = value;
+    render();
+    var body = {}; body[field] = value;
+    api('PATCH', '/api/nodes/' + nodeId, body).catch(function () { showToast('บันทึกไม่สำเร็จ'); });
   }
   function updateSelected(field, value) {
     var node = nodesById.get(state.selectedId); if (!node) return;
@@ -616,6 +716,20 @@
       api('PATCH', '/api/nodes/' + node.id, body).catch(function () { showToast('บันทึกไม่สำเร็จ'); });
     }, 500);
   }
+  // Shared by drag-and-drop and undo/redo of a move; targetParentId === null
+  // moves the node back to root level.
+  function moveNodeTo(nodeId, targetParentId, opts) {
+    var node = nodesById.get(nodeId); if (!node) return;
+    var target = targetParentId ? nodesById.get(targetParentId) : null;
+    var newLevel = target ? target.level + 1 : 1;
+    var delta = newLevel - node.level;
+    detachFromParent(nodeId);
+    attachToParent(nodeId, targetParentId);
+    shiftLevels(nodeId, delta);
+    if (!opts || opts.select !== false) state.selectedId = nodeId;
+    render();
+    api('POST', '/api/nodes/' + nodeId + '/move', { targetParentId: targetParentId }).catch(function () { showToast('ย้ายไม่สำเร็จ'); });
+  }
   function handleDrop(targetId) {
     var draggingId = state.draggingId;
     state.draggingId = null; state.dragOverId = null;
@@ -624,13 +738,12 @@
     if (!node || !target) { render(); return; }
     var n = target;
     while (n) { if (n.id === draggingId) { render(); return; } n = n.parentId ? nodesById.get(n.parentId) : null; }
-    var oldLevel = node.level, newLevel = target.level + 1, delta = newLevel - oldLevel;
-    detachFromParent(draggingId);
-    attachToParent(draggingId, targetId);
-    shiftLevels(draggingId, delta);
-    state.selectedId = draggingId;
-    render();
-    api('POST', '/api/nodes/' + draggingId + '/move', { targetParentId: targetId }).catch(function () { showToast('ย้ายไม่สำเร็จ'); });
+    var oldParentId = node.parentId;
+    moveNodeTo(draggingId, targetId);
+    pushUndo({
+      undo: function () { moveNodeTo(draggingId, oldParentId); },
+      redo: function () { moveNodeTo(draggingId, targetId); }
+    });
   }
   function handleSheetDrop(targetId) {
     var draggingSheetId = state.draggingSheetId;
@@ -1375,6 +1488,8 @@
       '</div>' +
       '<div class="topbar-center">' + renderLegend() + '</div>' +
       '<div class="topbar-right">' +
+      '<button class="btn icon-only" data-act="undo"' + (undoStack.length ? '' : ' disabled') + ' title="ย้อนกลับ (เฉพาะการแก้ไขของคุณ)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>' +
+      '<button class="btn icon-only" data-act="redo"' + (redoStack.length ? '' : ' disabled') + ' title="ทำซ้ำ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>' +
       '<button class="btn" data-act="download-excel" title="ดาวน์โหลด Excel ของกิ่งที่โหลดอยู่"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>ดาวน์โหลด Excel</button>' +
       '<button class="btn' + (state.chatOpen ? ' btn-primary' : '') + '" data-act="toggle-chat" title="ค้นหาว่าสินค้าควรอยู่หมวดไหน"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>ถามหาหมวดหมู่</button>' +
       '<button class="btn btn-primary" data-act="add-root"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>เพิ่มหมวดหมู่หลัก</button>' +
@@ -1528,9 +1643,44 @@
     }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'chat-input' && e.key === 'Enter') { e.preventDefault(); sendChatMessage(); }
   });
+  // A re-render mid-edit (e.g. a slow PATCH response, or the focus/caret
+  // preservation cycle itself) detaches and reinserts the field's DOM node,
+  // which fires a synthetic focusout+focusin even though the user never
+  // actually left the field -- checking document.activeElement one tick
+  // later tells real blur (focus lands elsewhere or nowhere) apart from that
+  // synthetic one (focus lands right back on the same field), so only a real
+  // blur closes out the edit session and pushes a single undo entry for it
+  // (not one per keystroke).
+  function noteFieldBlur(nodeId, field, afterValue) {
+    setTimeout(function () {
+      var active = document.activeElement;
+      var stillEditing = active && active.getAttribute && active.getAttribute('data-field') === field &&
+        fieldEditSnapshot && fieldEditSnapshot.nodeId === nodeId && fieldEditSnapshot.field === field;
+      if (stillEditing) return;
+      if (!fieldEditSnapshot || fieldEditSnapshot.nodeId !== nodeId || fieldEditSnapshot.field !== field) return;
+      var before = fieldEditSnapshot.before;
+      fieldEditSnapshot = null;
+      if (afterValue !== before) {
+        pushUndo({
+          undo: function () { setNodeField(nodeId, field, before); },
+          redo: function () { setNodeField(nodeId, field, afterValue); }
+        });
+      }
+    }, 0);
+  }
+  app.addEventListener('focusin', function (e) {
+    var field = e.target.getAttribute && e.target.getAttribute('data-field');
+    if (field !== 'name' && field !== 'translation' && field !== 'definition') return;
+    if (fieldEditSnapshot && fieldEditSnapshot.nodeId === state.selectedId && fieldEditSnapshot.field === field) return;
+    fieldEditSnapshot = { nodeId: state.selectedId, field: field, before: e.target.isContentEditable ? e.target.innerHTML : e.target.value };
+  });
   app.addEventListener('focusout', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'rename-input') commitRenameSheet();
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input') setMyName(e.target.value);
+    var field = e.target.getAttribute && e.target.getAttribute('data-field');
+    if (field === 'name' || field === 'translation' || field === 'definition') {
+      noteFieldBlur(fieldEditSnapshot ? fieldEditSnapshot.nodeId : state.selectedId, field, e.target.isContentEditable ? e.target.innerHTML : e.target.value);
+    }
   });
   app.addEventListener('change', function (e) {
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'image-change') handleImageChange(e.target.files && e.target.files[0]);
@@ -1669,11 +1819,22 @@
       case 'zoom-in': state.zoom = Math.min(1.6, Math.round((state.zoom + 0.1) * 100) / 100); render(); break;
       case 'zoom-out': state.zoom = Math.max(0.5, Math.round((state.zoom - 0.1) * 100) / 100); render(); break;
       case 'zoom-reset': state.zoom = 1; render(); break;
+      case 'undo': performUndo(); break;
+      case 'redo': performRedo(); break;
     }
   });
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && state.lightboxSrc) { state.lightboxSrc = null; render(); }
+    var isCtrl = e.ctrlKey || e.metaKey;
+    if (!isCtrl || (e.key !== 'z' && e.key !== 'Z' && e.key !== 'y' && e.key !== 'Y')) return;
+    // Never hijack native in-field undo (e.g. mid-sentence Ctrl+Z while typing
+    // a definition) -- only handle the shortcut when focus isn't in an editable field.
+    var t = document.activeElement;
+    var isEditable = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    if (isEditable) return;
+    if ((e.key === 'z' || e.key === 'Z') && !e.shiftKey) { e.preventDefault(); performUndo(); }
+    else if ((e.key === 'y' || e.key === 'Y') || ((e.key === 'z' || e.key === 'Z') && e.shiftKey)) { e.preventDefault(); performRedo(); }
   });
 
   render();

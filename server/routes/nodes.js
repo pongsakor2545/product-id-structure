@@ -196,30 +196,39 @@ router.delete('/nodes/:id', async (req, res) => {
 });
 
 router.post('/nodes/:id/move', async (req, res) => {
-  const { targetParentId } = req.body;
+  const targetParentId = req.body.targetParentId || null;
   const nodeId = req.params.id;
   if (nodeId === targetParentId) return res.status(400).json({ error: 'invalid_target' });
 
   const nodeRes = await pool.query('SELECT sheet_id, parent_id, level FROM nodes WHERE id = $1', [nodeId]);
   if (!nodeRes.rows[0]) return res.status(404).json({ error: 'not_found' });
-  const targetRes = await pool.query('SELECT sheet_id, level FROM nodes WHERE id = $1', [targetParentId]);
-  if (!targetRes.rows[0]) return res.status(404).json({ error: 'target_not_found' });
-  if (targetRes.rows[0].sheet_id !== nodeRes.rows[0].sheet_id) return res.status(400).json({ error: 'cross_sheet' });
 
-  const cycle = await pool.query(
-    `WITH RECURSIVE anc AS (
-       SELECT id, parent_id FROM nodes WHERE id = $1
-       UNION ALL
-       SELECT n.id, n.parent_id FROM nodes AS n JOIN anc AS a ON n.id = a.parent_id
-     )
-     SELECT 1 FROM anc WHERE id = $2 LIMIT 1`,
-    [targetParentId, nodeId]
-  );
-  if (cycle.rows[0]) return res.status(400).json({ error: 'would_cycle' });
+  let newLevel = 1;
+  if (targetParentId) {
+    const targetRes = await pool.query('SELECT sheet_id, level FROM nodes WHERE id = $1', [targetParentId]);
+    if (!targetRes.rows[0]) return res.status(404).json({ error: 'target_not_found' });
+    if (targetRes.rows[0].sheet_id !== nodeRes.rows[0].sheet_id) return res.status(400).json({ error: 'cross_sheet' });
+
+    const cycle = await pool.query(
+      `WITH RECURSIVE anc AS (
+         SELECT id, parent_id FROM nodes WHERE id = $1
+         UNION ALL
+         SELECT n.id, n.parent_id FROM nodes AS n JOIN anc AS a ON n.id = a.parent_id
+       )
+       SELECT 1 FROM anc WHERE id = $2 LIMIT 1`,
+      [targetParentId, nodeId]
+    );
+    if (cycle.rows[0]) return res.status(400).json({ error: 'would_cycle' });
+    newLevel = targetRes.rows[0].level + 1;
+  }
+  // targetParentId === null means "move back to root" -- used by undo to
+  // reverse a move whose original position was a root category.
 
   const oldParentId = nodeRes.rows[0].parent_id;
-  const newLevel = targetRes.rows[0].level + 1;
-  const ord = await pool.query('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM nodes WHERE parent_id = $1', [targetParentId]);
+  const ord = await pool.query(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM nodes WHERE sheet_id = $1 AND (parent_id = $2 OR (parent_id IS NULL AND $2 IS NULL))',
+    [nodeRes.rows[0].sheet_id, targetParentId]
+  );
 
   await pool.query('UPDATE nodes SET parent_id = $1, sort_order = $2, collapsed = FALSE WHERE id = $3', [targetParentId, ord.rows[0].next, nodeId]);
   await pool.query(
@@ -234,6 +243,32 @@ router.post('/nodes/:id/move', async (req, res) => {
 
   ws.broadcast(nodeRes.rows[0].sheet_id, { senderClientId: req.get('X-Client-Id') || null, type: 'node:moved', id: nodeId, oldParentId, newParentId: targetParentId, newLevel });
   res.json({ ok: true, newLevel });
+});
+
+// Recreates a node with its *original* id (used only by client-side undo, to
+// bring back a just-deleted category+subtree without any id remapping, so
+// redoing the delete afterward can target the exact same id again).
+router.post('/sheets/:sheetId/nodes/restore', async (req, res) => {
+  const { id: nodeId, parentId, name, translation, definition, imageUrl, definitionColor, needsReview, level, collapsed } = req.body;
+  if (!nodeId) return res.status(400).json({ error: 'id_required' });
+  const ord = await pool.query(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM nodes WHERE sheet_id = $1 AND (parent_id = $2 OR (parent_id IS NULL AND $2 IS NULL))',
+    [req.params.sheetId, parentId || null]
+  );
+  await pool.query(
+    `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, level, sort_order, collapsed)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     ON CONFLICT (id) DO NOTHING`,
+    [nodeId, req.params.sheetId, parentId || null, name || '', translation || '', definition || '', imageUrl || null, definitionColor || null, !!needsReview, level || 1, ord.rows[0].next, !!collapsed]
+  );
+  const node = {
+    id: nodeId, sheetId: req.params.sheetId, parentId: parentId || null,
+    name: name || '', translation: translation || '', definition: definition || '',
+    imageUrl: imageUrl || null, definitionColor: definitionColor || null, needsReview: !!needsReview,
+    level: level || 1, collapsed: !!collapsed, sortOrder: ord.rows[0].next, childCount: 0
+  };
+  ws.broadcast(req.params.sheetId, { senderClientId: req.get('X-Client-Id') || null, type: 'node:created', parentId: node.parentId, node });
+  res.json(node);
 });
 
 module.exports = router;
