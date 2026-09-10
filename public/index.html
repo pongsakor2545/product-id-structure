@@ -168,6 +168,8 @@
   .mindmap-wrap { cursor: grab; user-select: none; }
   .mindmap-wrap:active { cursor: grabbing; }
   .tree-tip { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 9px 13px; margin-bottom: 18px; }
+  .root-drop-zone { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--primary); background: var(--primary-tint); border: 2px dashed var(--primary); border-radius: 10px; padding: 14px; margin-bottom: 18px; }
+  .root-drop-zone.dragover { background: var(--success-tint); border-color: var(--success-line); color: var(--success-line); }
   .topbar-center { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-self: center; min-width: 0; }
   .legend { display: flex; gap: 8px; flex-wrap: wrap; }
   .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-faint); background: var(--surface); border: 1.5px solid var(--border); border-radius: 999px; padding: 5px 12px 5px 9px; cursor: pointer; transition: opacity .12s ease, border-color .12s ease; opacity: 0.55; }
@@ -790,10 +792,16 @@
     var draggingId = state.draggingId;
     state.draggingId = null; state.dragOverId = null;
     if (!draggingId || draggingId === targetId) { render(); return; }
-    var node = nodesById.get(draggingId), target = nodesById.get(targetId);
-    if (!node || !target) { render(); return; }
-    var n = target;
-    while (n) { if (n.id === draggingId) { render(); return; } n = n.parentId ? nodesById.get(n.parentId) : null; }
+    var node = nodesById.get(draggingId);
+    if (!node) { render(); return; }
+    if (targetId) {
+      var target = nodesById.get(targetId);
+      if (!target) { render(); return; }
+      var n = target;
+      while (n) { if (n.id === draggingId) { render(); return; } n = n.parentId ? nodesById.get(n.parentId) : null; }
+    } else if (!node.parentId) {
+      render(); return; // already at root
+    }
     var oldParentId = node.parentId;
     moveNodeTo(draggingId, targetId);
     pushUndo({
@@ -1290,7 +1298,14 @@
   }
   function renderTreeView() {
     var rows = flattenRows(state.rootIds, 0, []);
-    return '<div class="tree-wrap"><div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>ลากหมวดหมู่ (พร้อมหมวดย่อยทั้งหมด) ไปวางบนหมวดอื่น เพื่อย้ายทั้งก้อนและปรับ Level ให้อัตโนมัติ · โหลดข้อมูลเฉพาะกิ่งที่ขยาย</div><div class="tree">' + rows.map(renderTreeRow).join('') + '</div></div>';
+    // While a category is being dragged, show a standing drop target for
+    // "send it back to top level" -- otherwise dropping is only possible
+    // onto another card, which always nests it deeper, with no way to drag
+    // it back out to root.
+    var draggingNode = state.draggingId ? nodesById.get(state.draggingId) : null;
+    var rootZoneHtml = (draggingNode && draggingNode.parentId) ?
+      '<div class="root-drop-zone' + (state.dragOverId === 'root' ? ' dragover' : '') + '" data-root-drop="1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>ปล่อยที่นี่เพื่อย้ายกลับไปเป็นหมวดหมู่หลัก (ระดับบนสุด)</div>' : '';
+    return '<div class="tree-wrap"><div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>ลากหมวดหมู่ (พร้อมหมวดย่อยทั้งหมด) ไปวางบนหมวดอื่น เพื่อย้ายทั้งก้อนและปรับ Level ให้อัตโนมัติ · โหลดข้อมูลเฉพาะกิ่งที่ขยาย</div>' + rootZoneHtml + '<div class="tree">' + rows.map(renderTreeRow).join('') + '</div></div>';
   }
 
   function computeMindLayout(rootIds) {
@@ -1635,6 +1650,12 @@
       if (state.dragOverSheetId !== sid) { state.dragOverSheetId = sid; render(); }
       return;
     }
+    var rootZone = e.target.closest('[data-root-drop]');
+    if (rootZone && state.draggingId) {
+      e.preventDefault();
+      if (state.dragOverId !== 'root') { state.dragOverId = 'root'; render(); }
+      return;
+    }
     var el = e.target.closest('[data-drag-id]'); if (!el) return;
     e.preventDefault();
     var id = el.getAttribute('data-drag-id');
@@ -1643,6 +1664,8 @@
   app.addEventListener('drop', function (e) {
     var sheetEl = e.target.closest('[data-sheet-drag-id]');
     if (sheetEl && state.draggingSheetId) { e.preventDefault(); handleSheetDrop(sheetEl.getAttribute('data-sheet-drag-id')); return; }
+    var rootZone = e.target.closest('[data-root-drop]');
+    if (rootZone && state.draggingId) { e.preventDefault(); handleDrop(null); return; }
     var el = e.target.closest('[data-drag-id]'); if (!el) return;
     e.preventDefault(); handleDrop(el.getAttribute('data-drag-id'));
   });
