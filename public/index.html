@@ -178,7 +178,10 @@
   .legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 
   .tree { display: flex; flex-direction: column; }
-  .row-wrap { display: flex; align-items: stretch; }
+  .row-wrap { display: flex; align-items: stretch; position: relative; }
+  .insert-line { position: absolute; left: 26px; right: 4px; height: 3px; border-radius: 2px; background: var(--success-line); z-index: 5; pointer-events: none; }
+  .insert-line-top { top: -1px; }
+  .insert-line-bottom { bottom: -1px; }
   .guide-col { position: relative; width: 24px; height: 60px; flex-shrink: 0; }
   .row-content { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; height: 60px; padding: 0 8px 0 2px; border-radius: 8px; cursor: pointer; }
   .chevron-btn { width: 22px; height: 22px; flex-shrink: 0; border: none; background: transparent; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: var(--text-faint); cursor: pointer; }
@@ -339,7 +342,7 @@
 
   var state = {
     sheets: [], activeSheetId: null, rootIds: [],
-    selectedId: null, draggingId: null, dragOverId: null,
+    selectedId: null, draggingId: null, dragOverId: null, dragOverMode: null,
     draggingSheetId: null, dragOverSheetId: null,
     viewMode: 'tree', zoom: 1, hiddenLevels: new Set(),
     tool: 'pointer', pencilColor: '#1d1d1f', pencilSize: 3, textColor: '#1d1d1f', textSize: 16,
@@ -775,7 +778,8 @@
     }, 500);
   }
   // Shared by drag-and-drop and undo/redo of a move; targetParentId === null
-  // moves the node back to root level.
+  // moves the node to root level. opts.insertBeforeId, when given, places the
+  // node right before that sibling instead of appending it at the end.
   function moveNodeTo(nodeId, targetParentId, opts) {
     var node = nodesById.get(nodeId); if (!node) return;
     var target = targetParentId ? nodesById.get(targetParentId) : null;
@@ -783,30 +787,61 @@
     var delta = newLevel - node.level;
     detachFromParent(nodeId);
     attachToParent(nodeId, targetParentId);
+    if (opts && opts.insertBeforeId) {
+      var siblingIds = targetParentId ? (nodesById.get(targetParentId) || {}).childrenIds : state.rootIds;
+      if (siblingIds) {
+        var curIdx = siblingIds.indexOf(nodeId);
+        if (curIdx !== -1) siblingIds.splice(curIdx, 1);
+        var beforeIdx = siblingIds.indexOf(opts.insertBeforeId);
+        siblingIds.splice(beforeIdx === -1 ? siblingIds.length : beforeIdx, 0, nodeId);
+      }
+    }
     shiftLevels(nodeId, delta);
     if (!opts || opts.select !== false) state.selectedId = nodeId;
     render();
-    api('POST', '/api/nodes/' + nodeId + '/move', { targetParentId: targetParentId }).catch(function () { showToast('ย้ายไม่สำเร็จ'); });
+    var body = { targetParentId: targetParentId };
+    if (opts && opts.insertBeforeId) body.beforeId = opts.insertBeforeId;
+    api('POST', '/api/nodes/' + nodeId + '/move', body).catch(function () { showToast('ย้ายไม่สำเร็จ'); });
   }
-  function handleDrop(targetId) {
+  // targetId/mode come from the row the user dropped onto: mode 'child'
+  // nests the dragged branch under that row (the original behavior); 'before'
+  // / 'after' instead makes it a SIBLING of that row -- same level, placed
+  // just above or below it -- which is what lets a branch be reattached at
+  // any level, not only one level deeper than wherever it's dropped.
+  function handleDrop(targetId, mode) {
     var draggingId = state.draggingId;
-    state.draggingId = null; state.dragOverId = null;
+    state.draggingId = null; state.dragOverId = null; state.dragOverMode = null;
     if (!draggingId || draggingId === targetId) { render(); return; }
     var node = nodesById.get(draggingId);
     if (!node) { render(); return; }
+    var targetParentId, insertBeforeId = null;
     if (targetId) {
       var target = nodesById.get(targetId);
       if (!target) { render(); return; }
       var n = target;
       while (n) { if (n.id === draggingId) { render(); return; } n = n.parentId ? nodesById.get(n.parentId) : null; }
-    } else if (!node.parentId) {
-      render(); return; // already at root
+      if (mode === 'before' || mode === 'after') {
+        targetParentId = target.parentId || null;
+        var siblings = targetParentId ? (nodesById.get(targetParentId) || {}).childrenIds || [] : state.rootIds;
+        if (mode === 'before') {
+          insertBeforeId = targetId;
+        } else {
+          var tIdx = siblings.indexOf(targetId);
+          var nextId = (tIdx !== -1 && tIdx + 1 < siblings.length) ? siblings[tIdx + 1] : null;
+          insertBeforeId = (nextId && nextId !== draggingId) ? nextId : null;
+        }
+      } else {
+        targetParentId = target.id;
+      }
+    } else {
+      targetParentId = null; // root drop zone
+      if (!node.parentId) { render(); return; }
     }
     var oldParentId = node.parentId;
-    moveNodeTo(draggingId, targetId);
+    moveNodeTo(draggingId, targetParentId, { insertBeforeId: insertBeforeId });
     pushUndo({
       undo: function () { moveNodeTo(draggingId, oldParentId); },
-      redo: function () { moveNodeTo(draggingId, targetId); }
+      redo: function () { moveNodeTo(draggingId, targetParentId, { insertBeforeId: insertBeforeId }); }
     });
   }
   function handleSheetDrop(targetId) {
@@ -1269,12 +1304,14 @@
     var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" data-act="view-image" data-src="' + esc(imageSrc(node)) + '" title="คลิกเพื่อดูรูปเต็ม" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
     var thaiText = (node.translation && node.translation.trim()) ? esc(node.translation) : '<span style="opacity:.45;font-style:italic;">—</span>';
     var childCount = row.hasChildren ? '<span class="child-count">' + node.childCount + '</span>' : '';
-    var rowStyle = node.id === state.selectedId ? 'background:var(--primary-tint);' : (node.id === state.dragOverId ? 'background:var(--success-tint);outline:1.5px dashed var(--success-line);outline-offset:-2px;' : '');
+    var dragMode = node.id === state.dragOverId ? state.dragOverMode : null;
+    var rowStyle = node.id === state.selectedId ? 'background:var(--primary-tint);' : (dragMode === 'child' ? 'background:var(--success-tint);outline:1.5px dashed var(--success-line);outline-offset:-2px;' : '');
     if (node.id === state.draggingId) rowStyle += 'opacity:0.4;';
+    var insertLine = dragMode === 'before' ? '<div class="insert-line insert-line-top"></div>' : (dragMode === 'after' ? '<div class="insert-line insert-line-bottom"></div>' : '');
     var rowCls = 'row-content' + (node.needsReview ? ' needs-review' : '');
     var reviewBadge = node.needsReview ? '<span class="review-badge" title="รอการตรวจสอบ"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>' : '';
     return (
-      '<div class="row-wrap" draggable="true" data-drag-id="' + node.id + '" data-row-id="' + node.id + '">' + guides + elbow +
+      '<div class="row-wrap" draggable="true" data-drag-id="' + node.id + '" data-row-id="' + node.id + '">' + insertLine + guides + elbow +
       '<div class="' + rowCls + '" style="' + rowStyle + '" data-act="select-node" data-id="' + node.id + '">' + chevron + thumb +
       '<div class="node-name-stack"><span class="node-name">' + esc(node.name) + '</span><span class="node-translation">' + thaiText + '</span></div>' +
       '<span class="level-badge" style="background:' + colors.tintBg + ';color:' + colors.tintText + '">L' + node.level + '</span>' + childCount + reviewBadge +
@@ -1305,7 +1342,7 @@
     var draggingNode = state.draggingId ? nodesById.get(state.draggingId) : null;
     var rootZoneHtml = (draggingNode && draggingNode.parentId) ?
       '<div class="root-drop-zone' + (state.dragOverId === 'root' ? ' dragover' : '') + '" data-root-drop="1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>ปล่อยที่นี่เพื่อย้ายกลับไปเป็นหมวดหมู่หลัก (ระดับบนสุด)</div>' : '';
-    return '<div class="tree-wrap"><div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>ลากหมวดหมู่ (พร้อมหมวดย่อยทั้งหมด) ไปวางบนหมวดอื่น เพื่อย้ายทั้งก้อนและปรับ Level ให้อัตโนมัติ · โหลดข้อมูลเฉพาะกิ่งที่ขยาย</div>' + rootZoneHtml + '<div class="tree">' + rows.map(renderTreeRow).join('') + '</div></div>';
+    return '<div class="tree-wrap"><div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>ลากหมวดหมู่ (พร้อมหมวดย่อยทั้งหมด) ไปวางตรงกลางการ์ดอื่นเพื่อย้ายเข้าไปเป็นหมวดย่อย หรือวางใกล้ขอบบน/ล่างเพื่อย้ายไปอยู่ Level เดียวกับการ์ดนั้น · โหลดข้อมูลเฉพาะกิ่งที่ขยาย</div>' + rootZoneHtml + '<div class="tree">' + rows.map(renderTreeRow).join('') + '</div></div>';
   }
 
   function computeMindLayout(rootIds) {
@@ -1653,24 +1690,30 @@
     var rootZone = e.target.closest('[data-root-drop]');
     if (rootZone && state.draggingId) {
       e.preventDefault();
-      if (state.dragOverId !== 'root') { state.dragOverId = 'root'; render(); }
+      if (state.dragOverId !== 'root') { state.dragOverId = 'root'; state.dragOverMode = null; render(); }
       return;
     }
     var el = e.target.closest('[data-drag-id]'); if (!el) return;
     e.preventDefault();
     var id = el.getAttribute('data-drag-id');
-    if (state.dragOverId !== id) { state.dragOverId = id; render(); }
+    // Where within the row the cursor is decides the drop meaning: near the
+    // top/bottom edge inserts the dragged category as a SIBLING of this row
+    // (same level, before/after it) instead of nesting it as this row's child.
+    var rect = el.getBoundingClientRect();
+    var rel = rect.height ? (e.clientY - rect.top) / rect.height : 0.5;
+    var mode = rel < 0.28 ? 'before' : (rel > 0.72 ? 'after' : 'child');
+    if (state.dragOverId !== id || state.dragOverMode !== mode) { state.dragOverId = id; state.dragOverMode = mode; render(); }
   });
   app.addEventListener('drop', function (e) {
     var sheetEl = e.target.closest('[data-sheet-drag-id]');
     if (sheetEl && state.draggingSheetId) { e.preventDefault(); handleSheetDrop(sheetEl.getAttribute('data-sheet-drag-id')); return; }
     var rootZone = e.target.closest('[data-root-drop]');
-    if (rootZone && state.draggingId) { e.preventDefault(); handleDrop(null); return; }
+    if (rootZone && state.draggingId) { e.preventDefault(); handleDrop(null, null); return; }
     var el = e.target.closest('[data-drag-id]'); if (!el) return;
-    e.preventDefault(); handleDrop(el.getAttribute('data-drag-id'));
+    e.preventDefault(); handleDrop(el.getAttribute('data-drag-id'), state.dragOverMode);
   });
   app.addEventListener('dragend', function () {
-    state.draggingId = null; state.dragOverId = null;
+    state.draggingId = null; state.dragOverId = null; state.dragOverMode = null;
     state.draggingSheetId = null; state.dragOverSheetId = null;
     render();
   });

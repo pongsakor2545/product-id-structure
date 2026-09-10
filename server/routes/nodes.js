@@ -225,12 +225,30 @@ router.post('/nodes/:id/move', async (req, res) => {
   // reverse a move whose original position was a root category.
 
   const oldParentId = nodeRes.rows[0].parent_id;
-  const ord = await pool.query(
-    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM nodes WHERE sheet_id = $1 AND (parent_id = $2 OR (parent_id IS NULL AND $2 IS NULL))',
-    [nodeRes.rows[0].sheet_id, targetParentId]
-  );
+  const beforeId = req.body.beforeId || null;
 
-  await pool.query('UPDATE nodes SET parent_id = $1, sort_order = $2, collapsed = FALSE WHERE id = $3', [targetParentId, ord.rows[0].next, nodeId]);
+  if (beforeId) {
+    // Precise sibling placement (used when dropping near a row's top/bottom
+    // edge rather than its middle): renumber the whole destination sibling
+    // list with the moved node spliced in right before `beforeId`.
+    const sibRes = await pool.query(
+      'SELECT id FROM nodes WHERE sheet_id = $1 AND (parent_id = $2 OR (parent_id IS NULL AND $2 IS NULL)) AND id <> $3 ORDER BY sort_order ASC',
+      [nodeRes.rows[0].sheet_id, targetParentId, nodeId]
+    );
+    const siblingIds = sibRes.rows.map((r) => r.id);
+    const insertAt = siblingIds.indexOf(beforeId);
+    siblingIds.splice(insertAt === -1 ? siblingIds.length : insertAt, 0, nodeId);
+    for (let i = 0; i < siblingIds.length; i++) {
+      await pool.query('UPDATE nodes SET sort_order = $1 WHERE id = $2', [i, siblingIds[i]]);
+    }
+    await pool.query('UPDATE nodes SET parent_id = $1, collapsed = FALSE WHERE id = $2', [targetParentId, nodeId]);
+  } else {
+    const ord = await pool.query(
+      'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM nodes WHERE sheet_id = $1 AND (parent_id = $2 OR (parent_id IS NULL AND $2 IS NULL))',
+      [nodeRes.rows[0].sheet_id, targetParentId]
+    );
+    await pool.query('UPDATE nodes SET parent_id = $1, sort_order = $2, collapsed = FALSE WHERE id = $3', [targetParentId, ord.rows[0].next, nodeId]);
+  }
   await pool.query(
     `WITH RECURSIVE subtree AS (
        SELECT id, $2::int AS new_level FROM nodes WHERE id = $1
