@@ -1082,10 +1082,15 @@
   }
   function renderTreeRow(row) {
     var node = row.node, colors = colorForLevel(node.level);
-    var guides = row.ancestorLines.map(function (active) {
-      return '<div class="guide-col">' + (active ? '<div style="position:absolute;left:11px;top:0;width:1.5px;height:60px;background:var(--text-muted);"></div>' : '') + '</div>';
+    // Guide-column N (1-based, left to right) is colored with Level N's own
+    // color, matching the L1/L2/L3... badge colors exactly -- the whole
+    // vertical line stays one color top to bottom (never changes mid-line).
+    var guides = row.ancestorLines.map(function (active, gi) {
+      var guideColor = colorForLevel(gi + 1).solid;
+      return '<div class="guide-col">' + (active ? '<div style="position:absolute;left:11px;top:0;width:1.5px;height:60px;background:' + guideColor + ';"></div>' : '') + '</div>';
     }).join('');
-    var elbow = row.depth > 0 ? '<div class="guide-col"><div style="position:absolute;left:11px;top:0;width:1.5px;height:' + (row.isLast ? '30px' : '60px') + ';background:var(--text-muted);"></div><div style="position:absolute;left:11px;top:30px;width:13px;height:1.5px;background:var(--text-muted);"></div></div>' : '';
+    var elbowColor = colorForLevel(row.depth).solid;
+    var elbow = row.depth > 0 ? '<div class="guide-col"><div style="position:absolute;left:11px;top:0;width:1.5px;height:' + (row.isLast ? '30px' : '60px') + ';background:' + elbowColor + ';"></div><div style="position:absolute;left:11px;top:30px;width:13px;height:1.5px;background:' + elbowColor + ';"></div></div>' : '';
     var chevron = row.hasChildren
       ? '<button class="chevron-btn" data-act="toggle-collapse" data-id="' + node.id + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(' + (node.collapsed ? '0deg' : '90deg') + ')"><path d="M9 6l6 6-6 6"/></svg></button>'
       : '<div class="chevron-spacer"></div>';
