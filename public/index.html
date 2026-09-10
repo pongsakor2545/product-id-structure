@@ -570,14 +570,55 @@
       render();
     }).catch(function () { showToast('โหลดชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); });
   }
-  function addSheet() { api('POST', '/api/sheets', { name: 'ชีทใหม่ ' + (state.sheets.length + 1) }).then(function (s) { state.sheets.push(s); switchSheet(s.id); }).catch(function () { showToast('เพิ่มชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); }); }
-  function duplicateSheet(id) { api('POST', '/api/sheets/' + id + '/duplicate').then(function (s) { state.sheets.push(s); state.contextMenuSheetId = null; switchSheet(s.id); }).catch(function () { showToast('คัดลอกชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); }); }
-  function deleteSheet(id) {
-    if (state.sheets.length <= 1) return;
-    api('DELETE', '/api/sheets/' + id).then(function () {
+  function setSheetColor(id, color) {
+    var sh = state.sheets.find(function (s) { return s.id === id; }); if (!sh) return;
+    sh.color = color;
+    render();
+    api('PATCH', '/api/sheets/' + id, { color: color }).catch(function () { showToast('เปลี่ยนสีชีทไม่สำเร็จ'); });
+  }
+  function restoreSheet(meta, full, insertAt) {
+    return api('POST', '/api/sheets/restore', {
+      id: meta.id, name: meta.name, sortOrder: meta.sortOrder, color: meta.color,
+      nodes: (full && full.nodes) || [], drawings: (full && full.drawings) || [], texts: (full && full.texts) || []
+    }).then(function (s) {
+      var at = Math.min(insertAt == null ? state.sheets.length : insertAt, state.sheets.length);
+      state.sheets.splice(at, 0, s);
+      switchSheet(s.id);
+      return s;
+    });
+  }
+  function deleteSheetRaw(id) {
+    return api('DELETE', '/api/sheets/' + id).then(function () {
       state.sheets = state.sheets.filter(function (s) { return s.id !== id; });
       state.contextMenuSheetId = null;
-      if (state.activeSheetId === id) switchSheet(state.sheets[0].id); else render();
+      if (state.activeSheetId === id) { if (state.sheets.length) switchSheet(state.sheets[0].id); } else render();
+    });
+  }
+  function addSheet() {
+    api('POST', '/api/sheets', { name: 'ชีทใหม่ ' + (state.sheets.length + 1) }).then(function (s) {
+      state.sheets.push(s);
+      switchSheet(s.id);
+      pushUndo({
+        undo: function () { deleteSheetRaw(s.id).catch(function () {}); },
+        redo: function () { restoreSheet(s, null).catch(function () {}); }
+      });
+    }).catch(function () { showToast('เพิ่มชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); });
+  }
+  function duplicateSheet(id) { api('POST', '/api/sheets/' + id + '/duplicate').then(function (s) { state.sheets.push(s); state.contextMenuSheetId = null; switchSheet(s.id); }).catch(function () { showToast('คัดลอกชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); }); }
+  // Undo of a sheet delete needs the sheet's full contents (not just what's
+  // cached client-side, since collapsed/unloaded branches wouldn't be there)
+  // fetched *before* the delete call, then replayed through /sheets/restore.
+  function deleteSheet(id) {
+    if (state.sheets.length <= 1) return;
+    var meta = state.sheets.find(function (s) { return s.id === id; }); if (!meta) return;
+    var insertAt = state.sheets.indexOf(meta);
+    api('GET', '/api/sheets/' + id + '/full').then(function (full) {
+      return deleteSheetRaw(id).then(function () {
+        pushUndo({
+          undo: function () { restoreSheet(meta, full, insertAt).catch(function () { showToast('กู้คืนชีทไม่สำเร็จ'); }); },
+          redo: function () { deleteSheetRaw(id).catch(function () {}); }
+        });
+      });
     }).catch(function () { showToast('ลบชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); });
   }
   function submitDeleteSheetPassword() {
@@ -604,11 +645,20 @@
   }
 
   // ---------- node mutations ----------
+  function setNodeCollapsed(id, collapsed) {
+    var node = nodesById.get(id); if (!node) return;
+    node.collapsed = collapsed;
+    render();
+    api('PATCH', '/api/nodes/' + id, { collapsed: collapsed }).catch(function () {});
+  }
   function toggleCollapse(id) {
     var node = nodesById.get(id); if (!node) return;
-    node.collapsed = !node.collapsed;
-    render();
-    api('PATCH', '/api/nodes/' + id, { collapsed: node.collapsed }).catch(function () {});
+    var before = node.collapsed, after = !before;
+    setNodeCollapsed(id, after);
+    pushUndo({
+      undo: function () { setNodeCollapsed(id, before); },
+      redo: function () { setNodeCollapsed(id, after); }
+    });
   }
   // The tree/mindmap position of every card can shift once a node gains its
   // first child (the auto-layout re-packs around it), and render() keeps
@@ -705,6 +755,12 @@
     render();
     var body = {}; body[field] = value;
     api('PATCH', '/api/nodes/' + nodeId, body).catch(function () { showToast('บันทึกไม่สำเร็จ'); });
+  }
+  function setNodeReview(id, val) {
+    var node = nodesById.get(id); if (!node) return;
+    node.needsReview = val;
+    render();
+    api('PATCH', '/api/nodes/' + id, { needsReview: val }).catch(function () { showToast('บันทึกไม่สำเร็จ'); });
   }
   function updateSelected(field, value) {
     var node = nodesById.get(state.selectedId); if (!node) return;
@@ -1485,11 +1541,11 @@
       '<div class="view-toggle">' +
       '<button class="view-toggle-btn' + (state.viewMode === 'tree' ? ' active' : '') + '" data-act="set-view" data-view="tree"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>มุมมองรายการ</button>' +
       '<button class="view-toggle-btn' + (state.viewMode === 'mind' ? ' active' : '') + '" data-act="set-view" data-view="mind"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="12" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.2 11.3L15.8 6.7M7.4 12h8.2M7.2 12.7l8.6 4.6"/></svg>มุมมองผัง</button></div>' +
+      '<button class="btn icon-only" data-act="undo"' + (undoStack.length ? '' : ' disabled') + ' title="ย้อนกลับ (เฉพาะการแก้ไขของคุณ)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>' +
+      '<button class="btn icon-only" data-act="redo"' + (redoStack.length ? '' : ' disabled') + ' title="ทำซ้ำ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>' +
       '</div>' +
       '<div class="topbar-center">' + renderLegend() + '</div>' +
       '<div class="topbar-right">' +
-      '<button class="btn icon-only" data-act="undo"' + (undoStack.length ? '' : ' disabled') + ' title="ย้อนกลับ (เฉพาะการแก้ไขของคุณ)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>' +
-      '<button class="btn icon-only" data-act="redo"' + (redoStack.length ? '' : ' disabled') + ' title="ทำซ้ำ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>' +
       '<button class="btn" data-act="download-excel" title="ดาวน์โหลด Excel ของกิ่งที่โหลดอยู่"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>ดาวน์โหลด Excel</button>' +
       '<button class="btn' + (state.chatOpen ? ' btn-primary' : '') + '" data-act="toggle-chat" title="ค้นหาว่าสินค้าควรอยู่หมวดไหน"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>ถามหาหมวดหมู่</button>' +
       '<button class="btn btn-primary" data-act="add-root"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>เพิ่มหมวดหมู่หลัก</button>' +
@@ -1747,10 +1803,13 @@
         var csh = state.sheets.find(function (s) { return s.id === colorSheetId; });
         var newColor = el.getAttribute('data-color') || null;
         if (csh) {
-          csh.color = newColor;
+          var prevColor = csh.color;
           state.contextMenuSheetId = null;
-          render();
-          api('PATCH', '/api/sheets/' + colorSheetId, { color: newColor }).catch(function () { showToast('เปลี่ยนสีชีทไม่สำเร็จ'); });
+          setSheetColor(colorSheetId, newColor);
+          pushUndo({
+            undo: function () { setSheetColor(colorSheetId, prevColor); },
+            redo: function () { setSheetColor(colorSheetId, newColor); }
+          });
         }
         break;
       }
@@ -1786,10 +1845,13 @@
       case 'toggle-review': {
         var rNode = nodesById.get(id);
         if (rNode) {
-          rNode.needsReview = !rNode.needsReview;
+          var beforeReview = rNode.needsReview, afterReview = !beforeReview;
           state.nodeCtx = null;
-          render();
-          api('PATCH', '/api/nodes/' + id, { needsReview: rNode.needsReview }).catch(function () { showToast('บันทึกไม่สำเร็จ'); });
+          setNodeReview(id, afterReview);
+          pushUndo({
+            undo: function () { setNodeReview(id, beforeReview); },
+            redo: function () { setNodeReview(id, afterReview); }
+          });
         }
         break;
       }
