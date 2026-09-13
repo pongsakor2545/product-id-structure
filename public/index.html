@@ -1459,6 +1459,49 @@
       '</div></div>';
   }
 
+  // Caret position as a single character count from the start of `root`'s
+  // text, instead of an offset within whichever DOM node the caret happens
+  // to sit in. A contenteditable field with any rich-colored text (see
+  // applySelectionColor) has more than one child node (separate spans per
+  // color) -- an offset relative to just one of those nodes means nothing
+  // once the DOM is torn down and rebuilt on the next render, which is what
+  // was sending the caret to the wrong spot (usually the end) while typing
+  // mid-sentence in a field that had any colored text in it.
+  function textOffsetWithin(root, targetNode, targetOffset) {
+    var total = 0, done = false;
+    (function walk(node) {
+      if (done) return;
+      if (node === targetNode) {
+        if (node.nodeType === 3) total += Math.min(targetOffset, node.textContent.length);
+        else for (var i = 0; i < targetOffset && i < node.childNodes.length; i++) total += node.childNodes[i].textContent.length;
+        done = true;
+        return;
+      }
+      if (node.nodeType === 3) { total += node.textContent.length; return; }
+      for (var j = 0; j < node.childNodes.length; j++) { walk(node.childNodes[j]); if (done) return; }
+    })(root);
+    return total;
+  }
+  // Inverse of textOffsetWithin: finds the (textNode, localOffset) inside
+  // `root` that corresponds to a whole-element character count.
+  function nodeAtTextOffset(root, targetOffset) {
+    var remaining = targetOffset, result = null;
+    (function walk(node) {
+      if (result) return;
+      if (node.nodeType === 3) {
+        if (remaining <= node.textContent.length) result = { node: node, offset: remaining };
+        else remaining -= node.textContent.length;
+        return;
+      }
+      for (var i = 0; i < node.childNodes.length; i++) { walk(node.childNodes[i]); if (result) return; }
+    })(root);
+    if (!result) {
+      var last = root;
+      while (last.lastChild) last = last.lastChild;
+      result = last.nodeType === 3 ? { node: last, offset: last.textContent.length } : { node: root, offset: root.childNodes.length };
+    }
+    return result;
+  }
   function renderApp() {
     if (!state.bootReady) { app.innerHTML = renderBootScreen(); return; }
     var prevScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
@@ -1477,7 +1520,10 @@
       if (activeSelector) {
         try {
           var activeSel = window.getSelection();
-          if (activeSel && activeSel.rangeCount) activeCaretOffset = activeSel.getRangeAt(0).startOffset;
+          if (activeSel && activeSel.rangeCount) {
+            var activeRange = activeSel.getRangeAt(0);
+            activeCaretOffset = textOffsetWithin(activeEl, activeRange.startContainer, activeRange.startOffset);
+          }
         } catch (e) {}
       }
     }
@@ -1520,10 +1566,9 @@
       if (restoredText) {
         restoredText.focus();
         try {
-          var node = restoredText.firstChild || restoredText;
-          var maxOffset = node.nodeType === 3 ? node.length : restoredText.childNodes.length;
+          var pos = nodeAtTextOffset(restoredText, activeCaretOffset || 0);
           var range = document.createRange();
-          range.setStart(node, Math.min(activeCaretOffset || 0, maxOffset));
+          range.setStart(pos.node, pos.offset);
           range.collapse(true);
           var sel = window.getSelection();
           sel.removeAllRanges();
