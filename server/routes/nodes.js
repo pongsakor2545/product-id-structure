@@ -10,7 +10,7 @@ const router = patchRouter(express.Router());
 function id() { return crypto.randomUUID(); }
 
 const LIST_SELECT = `
-  SELECT n.id, n.name, n.translation, n.definition, n.level, n.collapsed,
+  SELECT n.id, n.name, n.translation, n.definition, n.level, n.collapsed, n.sort_order AS "sortOrder",
     n.image_url AS "imageUrl", n.definition_color AS "definitionColor", n.needs_review AS "needsReview",
     COUNT(c.id)::int AS "childCount"
   FROM nodes n
@@ -199,23 +199,33 @@ router.delete('/nodes/:id', async (req, res) => {
 // bring back a just-deleted category+subtree without any id remapping, so
 // redoing the delete afterward can target the exact same id again).
 router.post('/sheets/:sheetId/nodes/restore', async (req, res) => {
-  const { id: nodeId, parentId, name, translation, definition, imageUrl, definitionColor, needsReview, level, collapsed } = req.body;
+  const { id: nodeId, parentId, name, translation, definition, imageUrl, definitionColor, needsReview, level, collapsed, sortOrder } = req.body;
   if (!nodeId) return res.status(400).json({ error: 'id_required' });
-  const ord = await pool.query(
-    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM nodes WHERE sheet_id = $1 AND (parent_id = $2 OR (parent_id IS NULL AND $2 IS NULL))',
-    [req.params.sheetId, parentId || null]
-  );
+  // Reusing the node's original sort_order (rather than always appending at
+  // the end) is what puts it back at its original position among its
+  // siblings: deleting a node never renumbers the ones that stayed, so the
+  // same sort_order value still sorts it into the same slot -- as long as
+  // nothing else took that exact value while it was gone, which can't
+  // happen since new siblings are always appended past the current max.
+  let finalSortOrder = sortOrder;
+  if (finalSortOrder == null) {
+    const ord = await pool.query(
+      'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM nodes WHERE sheet_id = $1 AND (parent_id = $2 OR (parent_id IS NULL AND $2 IS NULL))',
+      [req.params.sheetId, parentId || null]
+    );
+    finalSortOrder = ord.rows[0].next;
+  }
   await pool.query(
     `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, level, sort_order, collapsed)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      ON CONFLICT (id) DO NOTHING`,
-    [nodeId, req.params.sheetId, parentId || null, name || '', translation || '', definition || '', imageUrl || null, definitionColor || null, !!needsReview, level || 1, ord.rows[0].next, !!collapsed]
+    [nodeId, req.params.sheetId, parentId || null, name || '', translation || '', definition || '', imageUrl || null, definitionColor || null, !!needsReview, level || 1, finalSortOrder, !!collapsed]
   );
   const node = {
     id: nodeId, sheetId: req.params.sheetId, parentId: parentId || null,
     name: name || '', translation: translation || '', definition: definition || '',
     imageUrl: imageUrl || null, definitionColor: definitionColor || null, needsReview: !!needsReview,
-    level: level || 1, collapsed: !!collapsed, sortOrder: ord.rows[0].next, childCount: 0
+    level: level || 1, collapsed: !!collapsed, sortOrder: finalSortOrder, childCount: 0
   };
   ws.broadcast(req.params.sheetId, { senderClientId: req.get('X-Client-Id') || null, type: 'node:created', parentId: node.parentId, node });
   res.json(node);

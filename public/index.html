@@ -363,7 +363,20 @@
   function toCacheNode(server, parentId) {
     return { id: server.id, name: server.name, translation: server.translation, definition: server.definition,
       level: server.level, collapsed: !!server.collapsed, imageUrl: server.imageUrl || null, definitionColor: server.definitionColor || null, needsReview: !!server.needsReview, childCount: server.childCount || 0,
+      sortOrder: server.sortOrder != null ? server.sortOrder : null,
       parentId: parentId, childrenLoaded: false, childrenIds: [] };
+  }
+  // Inserts id into a sibling-id array at the position its cached sortOrder
+  // says it belongs, instead of always appending -- used when restoring a
+  // deleted node so it lands back among its old neighbors, not at the end.
+  function insertBySortOrder(siblingIds, id) {
+    var so = (nodesById.get(id) || {}).sortOrder;
+    if (so == null) { siblingIds.push(id); return; }
+    var idx = siblingIds.findIndex(function (sid) {
+      var s = nodesById.get(sid);
+      return s && s.sortOrder != null && s.sortOrder > so;
+    });
+    if (idx === -1) siblingIds.push(id); else siblingIds.splice(idx, 0, id);
   }
   function ensureChildrenLoaded(nodeId) {
     var node = nodesById.get(nodeId);
@@ -501,6 +514,7 @@
     return {
       id: node.id, name: node.name, translation: node.translation, definition: node.definition,
       definitionColor: node.definitionColor, needsReview: node.needsReview, level: node.level, collapsed: node.collapsed,
+      sortOrder: node.sortOrder,
       children: (node.childrenIds || []).map(snapshotSubtree).filter(Boolean)
     };
   }
@@ -509,16 +523,21 @@
   // the same delete can target the exact same id again. Images are NOT
   // restored: the server permanently removes the image file from storage at
   // delete time, before undo is even possible, so the old image URL would
-  // just point at nothing -- a disclosed limitation of this feature.
+  // just point at nothing -- a disclosed limitation of this feature. Passing
+  // the original sortOrder through (instead of letting it default to "append
+  // at the end") is what puts the node back in its original position among
+  // its siblings rather than at the bottom of the list.
   function restoreSubtree(snapshot, parentId) {
     if (!snapshot) return Promise.resolve();
     return api('POST', '/api/sheets/' + state.activeSheetId + '/nodes/restore', {
       id: snapshot.id, parentId: parentId, name: snapshot.name, translation: snapshot.translation,
       definition: snapshot.definition, definitionColor: snapshot.definitionColor, needsReview: snapshot.needsReview,
-      level: snapshot.level, collapsed: snapshot.collapsed
+      level: snapshot.level, collapsed: snapshot.collapsed, sortOrder: snapshot.sortOrder
     }).then(function (node) {
       nodesById.set(node.id, toCacheNode(node, parentId));
       attachToParent(node.id, parentId);
+      var siblingIds = parentId ? (nodesById.get(parentId) || {}).childrenIds : state.rootIds;
+      if (siblingIds) { var idx = siblingIds.indexOf(node.id); if (idx !== -1) siblingIds.splice(idx, 1); insertBySortOrder(siblingIds, node.id); }
       return Promise.all(snapshot.children.map(function (child) { return restoreSubtree(child, node.id); })).then(function () {
         var cached = nodesById.get(node.id);
         cached.childrenLoaded = true;
@@ -686,7 +705,7 @@
       pushUndo({
         undo: function () { deleteNodeRaw(node.id).then(render); },
         redo: function () {
-          restoreSubtree({ id: node.id, name: node.name, translation: node.translation, definition: node.definition, definitionColor: null, needsReview: false, level: node.level, collapsed: false, children: [] }, parentId).then(render);
+          restoreSubtree({ id: node.id, name: node.name, translation: node.translation, definition: node.definition, definitionColor: null, needsReview: false, level: node.level, collapsed: false, sortOrder: node.sortOrder, children: [] }, parentId).then(render);
         }
       });
     }).catch(function () {
