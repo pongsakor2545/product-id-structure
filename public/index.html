@@ -168,6 +168,10 @@
   .mindmap-wrap { cursor: grab; user-select: none; }
   .mindmap-wrap:active { cursor: grabbing; }
   .tree-tip { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 9px 13px; margin-bottom: 18px; }
+  .move-mode-tip { color: var(--primary); background: var(--primary-tint); border-color: var(--primary); font-weight: 500; }
+  .move-mode-banner { position: sticky; top: 10px; left: 50%; transform: translateX(-50%); width: max-content; background: var(--primary); color: white; padding: 8px 16px; border-radius: 999px; font-size: 12.5px; font-weight: 500; z-index: 20; box-shadow: var(--shadow-md); pointer-events: none; white-space: nowrap; }
+  .root-drop-zone { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--primary); background: var(--primary-tint); border: 2px dashed var(--primary); border-radius: 10px; padding: 14px; margin-bottom: 18px; }
+  .root-drop-zone.dragover { background: var(--success-tint); border-color: var(--success-line); color: var(--success-line); }
   .topbar-center { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-self: center; min-width: 0; }
   .legend { display: flex; gap: 8px; flex-wrap: wrap; }
   .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-faint); background: var(--surface); border: 1.5px solid var(--border); border-radius: 999px; padding: 5px 12px 5px 9px; cursor: pointer; transition: opacity .12s ease, border-color .12s ease; opacity: 0.55; }
@@ -176,7 +180,10 @@
   .legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
 
   .tree { display: flex; flex-direction: column; }
-  .row-wrap { display: flex; align-items: stretch; }
+  .row-wrap { display: flex; align-items: stretch; position: relative; }
+  .insert-line { position: absolute; left: 26px; right: 4px; height: 3px; border-radius: 2px; background: var(--success-line); z-index: 5; pointer-events: none; }
+  .insert-line-top { top: -1px; }
+  .insert-line-bottom { bottom: -1px; }
   .guide-col { position: relative; width: 24px; height: 60px; flex-shrink: 0; }
   .row-content { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; height: 60px; padding: 0 8px 0 2px; border-radius: 8px; cursor: pointer; }
   .chevron-btn { width: 22px; height: 22px; flex-shrink: 0; border: none; background: transparent; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: var(--text-faint); cursor: pointer; }
@@ -222,6 +229,8 @@
   .mind-card { position: absolute; width: 230px; display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1.5px solid var(--border); border-radius: 12px; padding: 10px 13px; box-shadow: var(--shadow-sm); cursor: pointer; min-height: 44px; transition: box-shadow .12s ease, border-color .12s ease; }
   .mind-card:hover { box-shadow: var(--shadow-md); }
   .mind-card.selected { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-tint); }
+  .mind-card.dragover { border-color: var(--success-line); outline: 1.5px dashed var(--success-line); outline-offset: -2px; }
+  .mind-card.dragging { opacity: 0.4; }
   .mind-card.needs-review { border-color: #eab308 !important; box-shadow: 0 0 0 3px rgba(234,179,8,0.3), 0 0 14px 2px rgba(234,179,8,0.4) !important; }
   .row-content.needs-review { box-shadow: 0 0 0 2px rgba(234,179,8,0.35), 0 0 12px 2px rgba(234,179,8,0.4); }
   .review-badge { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #eab308; color: white; flex-shrink: 0; }
@@ -334,8 +343,9 @@
 
   var state = {
     sheets: [], activeSheetId: null, rootIds: [],
-    selectedId: null,
+    selectedId: null, draggingId: null, dragOverId: null, dragOverMode: null,
     draggingSheetId: null, dragOverSheetId: null,
+    moveModeActive: false, moveCtx: null,
     viewMode: 'tree', zoom: 1, hiddenLevels: new Set(),
     tool: 'pointer', pencilColor: '#1d1d1f', pencilSize: 3, textColor: '#1d1d1f', textSize: 16,
     drawings: [], texts: [],
@@ -345,6 +355,7 @@
     contextMenuSheetId: null, contextMenuX: 0,
     annoCtx: null, nodeCtx: null,
     lightboxSrc: null,
+    deleteNodeConfirmId: null,
     deleteSheetPromptId: null, deleteSheetPasswordInput: '', deleteSheetError: false,
     chatOpen: false, chatMessages: [], chatInput: '', chatBusy: false,
     bootProgress: 0, bootReady: false, loadBurstTotal: 0, loadBurstDone: 0,
@@ -453,6 +464,11 @@
     } else {
       if (state.rootIds.indexOf(id) === -1) state.rootIds.push(id);
     }
+  }
+  function shiftLevels(id, delta) {
+    var node = nodesById.get(id); if (!node) return;
+    node.level += delta;
+    node.childrenIds.forEach(function (cid) { shiftLevels(cid, delta); });
   }
   function removeFromCache(id) {
     var node = nodesById.get(id); if (!node) return;
@@ -783,6 +799,74 @@
       api('PATCH', '/api/nodes/' + node.id, body).catch(function () { showToast('บันทึกไม่สำเร็จ'); });
     }, 500);
   }
+  // Shared by drag-and-drop (only reachable in "move mode", see moveCtx) and
+  // undo/redo of a move; targetParentId === null moves the node to root
+  // level. opts.insertBeforeId, when given, places the node right before
+  // that sibling instead of appending it at the end.
+  function moveNodeTo(nodeId, targetParentId, opts) {
+    var node = nodesById.get(nodeId); if (!node) return;
+    var target = targetParentId ? nodesById.get(targetParentId) : null;
+    var newLevel = target ? target.level + 1 : 1;
+    var delta = newLevel - node.level;
+    detachFromParent(nodeId);
+    attachToParent(nodeId, targetParentId);
+    if (opts && opts.insertBeforeId) {
+      var siblingIds = targetParentId ? (nodesById.get(targetParentId) || {}).childrenIds : state.rootIds;
+      if (siblingIds) {
+        var curIdx = siblingIds.indexOf(nodeId);
+        if (curIdx !== -1) siblingIds.splice(curIdx, 1);
+        var beforeIdx = siblingIds.indexOf(opts.insertBeforeId);
+        siblingIds.splice(beforeIdx === -1 ? siblingIds.length : beforeIdx, 0, nodeId);
+      }
+    }
+    shiftLevels(nodeId, delta);
+    if (!opts || opts.select !== false) state.selectedId = nodeId;
+    render();
+    var body = { targetParentId: targetParentId };
+    if (opts && opts.insertBeforeId) body.beforeId = opts.insertBeforeId;
+    api('POST', '/api/nodes/' + nodeId + '/move', body).catch(function () { showToast('ย้ายไม่สำเร็จ'); });
+  }
+  // targetId/mode come from the row the user dropped onto: mode 'child'
+  // nests the dragged branch under that row; 'before' / 'after' instead
+  // makes it a SIBLING of that row -- same level, placed just above or below
+  // it -- which is what lets a branch be reattached at any level and any
+  // position, not only appended one level deeper than wherever it's dropped.
+  function handleDrop(targetId, mode) {
+    var draggingId = state.draggingId;
+    state.draggingId = null; state.dragOverId = null; state.dragOverMode = null;
+    if (!draggingId || draggingId === targetId) { render(); return; }
+    var node = nodesById.get(draggingId);
+    if (!node) { render(); return; }
+    var targetParentId, insertBeforeId = null;
+    if (targetId) {
+      var target = nodesById.get(targetId);
+      if (!target) { render(); return; }
+      var n = target;
+      while (n) { if (n.id === draggingId) { render(); return; } n = n.parentId ? nodesById.get(n.parentId) : null; }
+      if (mode === 'before' || mode === 'after') {
+        targetParentId = target.parentId || null;
+        var siblings = targetParentId ? (nodesById.get(targetParentId) || {}).childrenIds || [] : state.rootIds;
+        if (mode === 'before') {
+          insertBeforeId = targetId;
+        } else {
+          var tIdx = siblings.indexOf(targetId);
+          var nextId = (tIdx !== -1 && tIdx + 1 < siblings.length) ? siblings[tIdx + 1] : null;
+          insertBeforeId = (nextId && nextId !== draggingId) ? nextId : null;
+        }
+      } else {
+        targetParentId = target.id;
+      }
+    } else {
+      targetParentId = null; // root drop zone
+      if (!node.parentId) { render(); return; }
+    }
+    var oldParentId = node.parentId;
+    moveNodeTo(draggingId, targetParentId, { insertBeforeId: insertBeforeId });
+    pushUndo({
+      undo: function () { moveNodeTo(draggingId, oldParentId); },
+      redo: function () { moveNodeTo(draggingId, targetParentId, { insertBeforeId: insertBeforeId }); }
+    });
+  }
   function handleSheetDrop(targetId) {
     var draggingSheetId = state.draggingSheetId;
     state.draggingSheetId = null; state.dragOverSheetId = null;
@@ -1027,6 +1111,15 @@
         break;
       case 'node:updated': { var nu = nodesById.get(msg.id); if (nu) { Object.assign(nu, msg.patch); render(); } break; }
       case 'node:deleted': if (nodesById.has(msg.id)) { removeFromCache(msg.id); if (state.selectedId === msg.id) state.selectedId = null; render(); } break;
+      case 'node:moved':
+        if (nodesById.has(msg.id)) {
+          var mv = nodesById.get(msg.id), oldLvl = mv.level;
+          detachFromParent(msg.id);
+          attachToParent(msg.id, msg.newParentId);
+          shiftLevels(msg.id, msg.newLevel - oldLvl);
+          render();
+        }
+        break;
       case 'drawing:created': state.drawings.push(msg.drawing); render(); break;
       case 'drawing:updated': { var d = state.drawings.find(function (x) { return x.id === msg.id; }); if (d) { d.points = msg.points; render(); } break; }
       case 'drawing:deleted': state.drawings = state.drawings.filter(function (x) { return x.id !== msg.id; }); render(); break;
@@ -1234,11 +1327,14 @@
     var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" data-act="view-image" data-src="' + esc(imageSrc(node)) + '" title="คลิกเพื่อดูรูปเต็ม" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
     var thaiText = (node.translation && node.translation.trim()) ? esc(node.translation) : '<span style="opacity:.45;font-style:italic;">—</span>';
     var childCount = row.hasChildren ? '<span class="child-count">' + node.childCount + '</span>' : '';
-    var rowStyle = node.id === state.selectedId ? 'background:var(--primary-tint);' : '';
+    var dragMode = node.id === state.dragOverId ? state.dragOverMode : null;
+    var rowStyle = node.id === state.selectedId ? 'background:var(--primary-tint);' : (dragMode === 'child' ? 'background:var(--success-tint);outline:1.5px dashed var(--success-line);outline-offset:-2px;' : '');
+    if (node.id === state.draggingId) rowStyle += 'opacity:0.4;';
+    var insertLine = dragMode === 'before' ? '<div class="insert-line insert-line-top"></div>' : (dragMode === 'after' ? '<div class="insert-line insert-line-bottom"></div>' : '');
     var rowCls = 'row-content' + (node.needsReview ? ' needs-review' : '');
     var reviewBadge = node.needsReview ? '<span class="review-badge" title="รอการตรวจสอบ"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>' : '';
     return (
-      '<div class="row-wrap" data-row-id="' + node.id + '">' + guides + elbow +
+      '<div class="row-wrap"' + (state.moveModeActive ? ' draggable="true" data-drag-id="' + node.id + '"' : '') + ' data-row-id="' + node.id + '">' + insertLine + guides + elbow +
       '<div class="' + rowCls + '" style="' + rowStyle + '" data-act="select-node" data-id="' + node.id + '">' + chevron + thumb +
       '<div class="node-name-stack"><span class="node-name">' + esc(node.name) + '</span><span class="node-translation">' + thaiText + '</span></div>' +
       '<span class="level-badge" style="background:' + colors.tintBg + ';color:' + colors.tintText + '">L' + node.level + '</span>' + childCount + reviewBadge +
@@ -1261,7 +1357,17 @@
   }
   function renderTreeView() {
     var rows = flattenRows(state.rootIds, 0, []);
-    return '<div class="tree-wrap"><div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>โหลดข้อมูลเฉพาะกิ่งที่ขยาย</div><div class="tree">' + rows.map(renderTreeRow).join('') + '</div></div>';
+    var tip = state.moveModeActive
+      ? '<div class="tree-tip move-mode-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 9l-4 3 4 3M9 5l3-4 3 4M15 19l-3 4-3-4M19 9l4 3-4 3M2 12h20M12 2v20"/></svg>โหมดย้ายตำแหน่ง: ลากกล่องไปวางตรงกลางการ์ดอื่นเพื่อย้ายเข้าไปเป็นหมวดย่อย หรือวางใกล้ขอบบน/ล่างเพื่อแทรกที่ระดับเดียวกับการ์ดนั้น (ลากครั้งเดียวแล้วโหมดจะปิดเอง)</div>'
+      : '<div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>โหลดข้อมูลเฉพาะกิ่งที่ขยาย · คลิกขวาที่พื้นหลังเพื่อเปิดโหมดย้ายตำแหน่ง</div>';
+    // While a category is being dragged, show a standing drop target for
+    // "send it back to top level" -- otherwise dropping is only possible
+    // onto another card, which always nests it deeper, with no way to drag
+    // it back out to root.
+    var draggingNode = state.draggingId ? nodesById.get(state.draggingId) : null;
+    var rootZoneHtml = (draggingNode && draggingNode.parentId) ?
+      '<div class="root-drop-zone' + (state.dragOverId === 'root' ? ' dragover' : '') + '" data-root-drop="1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>ปล่อยที่นี่เพื่อย้ายกลับไปเป็นหมวดหมู่หลัก (ระดับบนสุด)</div>' : '';
+    return '<div class="tree-wrap">' + tip + rootZoneHtml + '<div class="tree">' + rows.map(renderTreeRow).join('') + '</div></div>';
   }
 
   function computeMindLayout(rootIds) {
@@ -1309,12 +1415,14 @@
     var colors = colorForLevel(node.level);
     var cls = 'mind-card';
     if (node.id === state.selectedId) cls += ' selected';
+    if (node.id === state.dragOverId) cls += ' dragover';
+    if (node.id === state.draggingId) cls += ' dragging';
     if (node.needsReview) cls += ' needs-review';
     var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" data-act="view-image" data-src="' + esc(imageSrc(node)) + '" title="คลิกเพื่อดูรูปเต็ม" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
     var thaiText = (node.translation && node.translation.trim()) ? esc(node.translation) : '<span style="opacity:.45;font-style:italic;">—</span>';
     var pill = node.childCount > 0 ? '<div class="mind-toggle-pill" data-act="toggle-collapse" data-id="' + node.id + '">' + node.childCount + '</div>' : '';
     var reviewBadge = node.needsReview ? '<span class="review-badge review-badge-float" title="รอการตรวจสอบ"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>' : '';
-    return '<div class="' + cls + '" data-card-id="' + node.id + '" data-act="select-node" data-id="' + node.id + '" style="left:' + node._px + 'px;top:' + (node._py - cardH / 2) + 'px;">' +
+    return '<div class="' + cls + '"' + (state.moveModeActive ? ' draggable="true" data-drag-id="' + node.id + '"' : '') + ' data-card-id="' + node.id + '" data-act="select-node" data-id="' + node.id + '" style="left:' + node._px + 'px;top:' + (node._py - cardH / 2) + 'px;">' +
       '<span class="mind-level-tag" style="background:' + colors.tintBg + ';color:' + colors.tintText + '">L' + node.level + '</span>' +
       reviewBadge +
       '<button class="mind-add-btn" data-act="add-child" data-id="' + node.id + '" title="เพิ่มหมวดย่อย"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>' +
@@ -1335,6 +1443,7 @@
     }).join('');
     var pointerActive = state.tool === 'pointer', pencilActive = state.tool === 'pencil', textActive = state.tool === 'text';
     return '<div class="mindmap-wrap" id="mindWrap" style="cursor:' + (pencilActive ? 'crosshair' : textActive ? 'text' : 'grab') + '">' +
+      (state.moveModeActive ? '<div class="move-mode-banner">โหมดย้ายตำแหน่ง: ลากการ์ดไปวางที่ต้องการ (ลากครั้งเดียวแล้วปิดเอง)</div>' : '') +
       '<div class="draw-toolbar"><div class="draw-tool-row">' +
       '<button class="draw-tool-btn' + (pointerActive ? ' active' : '') + '" data-act="set-tool" data-tool="pointer" title="ตัวชี้ (โหมดปกติ)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/></svg></button>' +
       '<button class="draw-tool-btn' + (pencilActive ? ' active' : '') + '" data-act="set-tool" data-tool="pencil" title="ดินสอวาดเส้น"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>' +
@@ -1418,6 +1527,13 @@
     return '<div class="ctx-overlay" data-act="close-node-ctx"></div><div class="ctx-menu" style="left:' + state.nodeCtx.x + 'px;top:' + state.nodeCtx.y + 'px;">' +
       '<button class="ctx-item' + (flagged ? ' warn' : '') + '" data-act="toggle-review" data-id="' + node.id + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg>' + (flagged ? 'ยกเลิกเครื่องหมายรอตรวจสอบ' : 'ทำเครื่องหมายรอตรวจสอบ') + '</button></div>';
   }
+  // Background right-click menu -- its one item arms "move mode" (see
+  // moveModeActive), which is the only time categories become draggable.
+  function renderMoveCtxMenu() {
+    if (!state.moveCtx) return '';
+    return '<div class="ctx-overlay" data-act="close-move-ctx"></div><div class="ctx-menu" style="left:' + state.moveCtx.x + 'px;top:' + state.moveCtx.y + 'px;">' +
+      '<button class="ctx-item" data-act="enable-move-mode"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l-4 3 4 3M9 5l3-4 3 4M15 19l-3 4-3-4M19 9l4 3-4 3M2 12h20M12 2v20"/></svg>ย้ายตำแหน่ง</button></div>';
+  }
   function renderPeoplePopover(others) {
     var body = '<div class="people-row"><span class="people-dot" style="background:' + esc(myColor) + '"></span><input class="people-name-input" type="text" maxlength="30" value="' + esc(myName) + '" data-act="my-name-input" placeholder="ชื่อของคุณ" /><span class="people-you-tag">คุณ</span></div>';
     body += others.length
@@ -1438,6 +1554,20 @@
       '<input class="modal-input' + (state.deleteSheetError ? ' error' : '') + '" type="password" id="deleteSheetPasswordInput" data-act="delete-sheet-password" value="' + esc(state.deleteSheetPasswordInput) + '" placeholder="รหัสผ่าน" />' +
       (state.deleteSheetError ? '<div class="modal-error-text">รหัสผ่านไม่ถูกต้อง</div>' : '') +
       '<div class="modal-actions"><button class="btn btn-ghost small" data-act="cancel-delete-sheet">ยกเลิก</button><button class="btn btn-primary small" data-act="confirm-delete-sheet" style="background:var(--danger);border-color:var(--danger);">ลบชีท</button></div>' +
+      '</div></div>';
+  }
+  // Confirmation gate before actually deleting a category, so an accidental
+  // click on the trash icon doesn't lose anything -- the delete is still
+  // undoable via Back afterward, but this catches the click before it happens.
+  function renderDeleteNodeModal() {
+    if (!state.deleteNodeConfirmId) return '';
+    var node = nodesById.get(state.deleteNodeConfirmId);
+    if (!node) return '';
+    var childWarning = node.childCount ? '<div class="modal-desc" style="color:var(--danger);">รวมหมวดย่อยทั้งหมด ' + node.childCount + ' รายการด้วย</div>' : '';
+    return '<div class="modal-overlay" data-act="cancel-delete-node"><div class="modal-card" data-act="stop-propagation">' +
+      '<div class="modal-title">ลบหมวดหมู่ "' + esc(node.name) + '"?</div>' +
+      childWarning +
+      '<div class="modal-actions"><button class="btn btn-ghost small" data-act="cancel-delete-node">ยกเลิก</button><button class="btn btn-primary small" data-act="confirm-delete-node" style="background:var(--danger);border-color:var(--danger);">ลบหมวดหมู่</button></div>' +
       '</div></div>';
   }
   function renderChatPanel() {
@@ -1569,7 +1699,7 @@
       (state.shareOpen ? '<div class="share-popover"><div class="share-title">แชร์ผังโครงสร้างนี้</div><div class="share-row"><input class="share-link-input" type="text" readonly value="' + esc(location.href) + '" /><button class="btn btn-primary small" data-act="copy-link">' + (state.copied ? 'คัดลอกแล้ว!' : 'คัดลอกลิงก์') + '</button></div><p class="share-hint">ทุกคนที่มีลิงก์นี้เข้าแก้ไขและเห็นการเปลี่ยนแปลงแบบเรียลไทม์ได้ (ไม่มีระบบล็อกอิน)</p></div>' : '') +
       '</div></div>' +
       '<div class="main">' + (state.viewMode === 'tree' ? renderTreeView() : renderMindView()) + renderPanel() + '</div>' +
-      renderSheetTabs() + renderSheetCtxMenu() + renderAnnoCtxMenu() + renderNodeCtxMenu() + renderLightbox() + renderDeleteSheetModal() + renderChatPanel() + renderLoadProgress() +
+      renderSheetTabs() + renderSheetCtxMenu() + renderAnnoCtxMenu() + renderNodeCtxMenu() + renderMoveCtxMenu() + renderLightbox() + renderDeleteSheetModal() + renderDeleteNodeModal() + renderChatPanel() + renderLoadProgress() +
       (state.toast ? '<div class="toast">' + esc(state.toast) + '</div>' : '');
     app.innerHTML = html;
     var newScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
@@ -1633,12 +1763,17 @@
     render();
   }, { passive: false });
 
-  // Categories are fixed in place once created (no drag-to-reparent); only
-  // sheet tabs remain draggable, to reorder them.
+  // Categories are only draggable in "move mode" (right-click the tree/mind
+  // background -> "ย้ายตำแหน่ง") -- otherwise every card being natively
+  // draggable made accidental drags too easy while just trying to click.
+  // Sheet tabs remain always-draggable, to reorder them (separate feature).
   app.addEventListener('dragstart', function (e) {
     var sheetEl = e.target.closest('[data-sheet-drag-id]');
     if (sheetEl) { state.draggingSheetId = sheetEl.getAttribute('data-sheet-drag-id'); e.dataTransfer.effectAllowed = 'move'; return; }
-    e.preventDefault();
+    var el = e.target.closest('[data-drag-id]');
+    if (!el || !state.moveModeActive || state.tool !== 'pointer') { e.preventDefault(); return; }
+    state.draggingId = el.getAttribute('data-drag-id');
+    e.dataTransfer.effectAllowed = 'move';
   });
   app.addEventListener('dragover', function (e) {
     var sheetEl = e.target.closest('[data-sheet-drag-id]');
@@ -1646,14 +1781,42 @@
       e.preventDefault();
       var sid = sheetEl.getAttribute('data-sheet-drag-id');
       if (state.dragOverSheetId !== sid) { state.dragOverSheetId = sid; render(); }
+      return;
     }
+    var rootZone = e.target.closest('[data-root-drop]');
+    if (rootZone && state.draggingId) {
+      e.preventDefault();
+      if (state.dragOverId !== 'root') { state.dragOverId = 'root'; state.dragOverMode = null; render(); }
+      return;
+    }
+    var el = e.target.closest('[data-drag-id]'); if (!el) return;
+    e.preventDefault();
+    var id = el.getAttribute('data-drag-id');
+    // Where within the card the cursor is decides the drop meaning: near the
+    // top/bottom edge inserts the dragged category as a SIBLING of this card
+    // (same level, before/after it, at that exact position) instead of
+    // nesting it as this card's child.
+    var rect = el.getBoundingClientRect();
+    var rel = rect.height ? (e.clientY - rect.top) / rect.height : 0.5;
+    var mode = rel < 0.28 ? 'before' : (rel > 0.72 ? 'after' : 'child');
+    if (state.dragOverId !== id || state.dragOverMode !== mode) { state.dragOverId = id; state.dragOverMode = mode; render(); }
   });
   app.addEventListener('drop', function (e) {
     var sheetEl = e.target.closest('[data-sheet-drag-id]');
-    if (sheetEl && state.draggingSheetId) { e.preventDefault(); handleSheetDrop(sheetEl.getAttribute('data-sheet-drag-id')); }
+    if (sheetEl && state.draggingSheetId) { e.preventDefault(); handleSheetDrop(sheetEl.getAttribute('data-sheet-drag-id')); return; }
+    var rootZone = e.target.closest('[data-root-drop]');
+    if (rootZone && state.draggingId) { e.preventDefault(); handleDrop(null, null); return; }
+    var el = e.target.closest('[data-drag-id]'); if (!el) return;
+    e.preventDefault(); handleDrop(el.getAttribute('data-drag-id'), state.dragOverMode);
   });
   app.addEventListener('dragend', function () {
+    // One drag "uses up" move mode -- to drag again the user must right-click
+    // the background and choose "ย้ายตำแหน่ง" again, which is what makes
+    // this safe to leave cards draggable during the drag itself.
+    var wasNodeDrag = !!state.draggingId;
+    state.draggingId = null; state.dragOverId = null; state.dragOverMode = null;
     state.draggingSheetId = null; state.dragOverSheetId = null;
+    if (wasNodeDrag) state.moveModeActive = false;
     render();
   });
 
@@ -1761,6 +1924,10 @@
     if (drawEl) { e.preventDefault(); state.annoCtx = { type: 'drawing', id: drawEl.getAttribute('data-draw-id'), x: e.clientX, y: e.clientY }; render(); return; }
     var nodeEl = e.target.closest('[data-act="select-node"]');
     if (nodeEl) { e.preventDefault(); state.nodeCtx = { id: nodeEl.getAttribute('data-id'), x: e.clientX, y: e.clientY }; render(); return; }
+    // Right-clicking empty background (not on any card/tab/annotation) opens
+    // the "ย้ายตำแหน่ง" menu that turns on move mode -- see moveModeActive.
+    var bgEl = e.target.closest('.tree-wrap, .mindmap-wrap');
+    if (bgEl) { e.preventDefault(); state.moveCtx = { x: e.clientX, y: e.clientY }; render(); return; }
   });
 
   app.addEventListener('click', function (e) {
@@ -1771,7 +1938,7 @@
       case 'toggle-collapse': toggleCollapse(id); break;
       case 'select-node': if (state.tool === 'pointer') { state.selectedId = id; render(); } break;
       case 'add-child': addChild(id); break;
-      case 'delete-node': deleteNode(id); break;
+      case 'delete-node': state.deleteNodeConfirmId = id; render(); break;
       case 'set-view': state.viewMode = el.getAttribute('data-view'); render(); break;
       case 'toggle-level-filter': {
         var lvl = Number(el.getAttribute('data-level'));
@@ -1787,7 +1954,9 @@
       case 'close-panel': state.selectedId = null; render(); break;
       case 'image-delete': handleImageDelete(); break;
       case 'add-sub': if (state.selectedId) addChild(state.selectedId); break;
-      case 'delete-selected': if (state.selectedId) deleteNode(state.selectedId); break;
+      case 'delete-selected': if (state.selectedId) { state.deleteNodeConfirmId = state.selectedId; render(); } break;
+      case 'cancel-delete-node': state.deleteNodeConfirmId = null; render(); break;
+      case 'confirm-delete-node': if (state.deleteNodeConfirmId) { deleteNode(state.deleteNodeConfirmId); state.deleteNodeConfirmId = null; render(); } break;
       case 'switch-sheet': switchSheet(id); break;
       case 'add-sheet': addSheet(); break;
       case 'scroll-sheets': {
@@ -1847,6 +2016,13 @@
       }
       case 'close-anno-ctx': state.annoCtx = null; render(); break;
       case 'close-node-ctx': state.nodeCtx = null; render(); break;
+      case 'close-move-ctx': state.moveCtx = null; render(); break;
+      case 'enable-move-mode':
+        state.moveCtx = null;
+        state.moveModeActive = true;
+        render();
+        showToast('โหมดย้ายตำแหน่ง: ลากกล่องที่ต้องการย้าย');
+        break;
       case 'toggle-review': {
         var rNode = nodesById.get(id);
         if (rNode) {
@@ -1893,6 +2069,8 @@
 
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && state.lightboxSrc) { state.lightboxSrc = null; render(); }
+    if (e.key === 'Escape' && state.deleteNodeConfirmId) { state.deleteNodeConfirmId = null; render(); }
+    if (e.key === 'Escape' && state.moveCtx) { state.moveCtx = null; render(); }
     var isCtrl = e.ctrlKey || e.metaKey;
     if (!isCtrl || (e.key !== 'z' && e.key !== 'Z' && e.key !== 'y' && e.key !== 'Y')) return;
     // Never hijack native in-field undo (e.g. mid-sentence Ctrl+Z while typing
