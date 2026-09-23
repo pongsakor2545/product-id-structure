@@ -169,6 +169,7 @@
   .mindmap-wrap:active { cursor: grabbing; }
   .tree-tip { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 9px 13px; margin-bottom: 18px; }
   .move-mode-tip { color: var(--primary); background: var(--primary-tint); border-color: var(--primary); font-weight: 500; }
+  .row-content.drop-child { background: var(--success-tint) !important; outline: 1.5px dashed var(--success-line); outline-offset: -2px; }
   .move-mode-badge { background: var(--danger); border-color: var(--danger); color: white; }
   .move-mode-badge:hover { filter: brightness(0.92); }
   .move-mode-banner { position: sticky; top: 10px; left: 50%; transform: translateX(-50%); width: max-content; background: var(--primary); color: white; padding: 8px 16px; border-radius: 999px; font-size: 12.5px; font-weight: 500; z-index: 20; box-shadow: var(--shadow-md); pointer-events: none; white-space: nowrap; }
@@ -1366,8 +1367,9 @@
     // "send it back to top level" -- otherwise dropping is only possible
     // onto another card, which always nests it deeper, with no way to drag
     // it back out to root.
-    var draggingNode = state.draggingId ? nodesById.get(state.draggingId) : null;
-    var rootZoneHtml = (draggingNode && draggingNode.parentId) ?
+    // Shown for the whole of move mode (not just mid-drag) so the DOM never
+    // has to be rebuilt during a drag just to make it appear.
+    var rootZoneHtml = state.moveModeActive ?
       '<div class="root-drop-zone' + (state.dragOverId === 'root' ? ' dragover' : '') + '" data-root-drop="1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>ปล่อยที่นี่เพื่อย้ายกลับไปเป็นหมวดหมู่หลัก (ระดับบนสุด)</div>' : '';
     return '<div class="tree-wrap">' + tip + rootZoneHtml + '<div class="tree">' + rows.map(renderTreeRow).join('') + '</div></div>';
   }
@@ -1777,7 +1779,40 @@
     if (!el || !state.moveModeActive || state.tool !== 'pointer') { e.preventDefault(); return; }
     state.draggingId = el.getAttribute('data-drag-id');
     e.dataTransfer.effectAllowed = 'move';
+    // Fade the dragged card by touching just that element (after the browser
+    // has captured its drag image) -- no re-render for the whole drag, since
+    // rebuilding the DOM mid-drag is what made dragging stutter and can even
+    // detach the source element so dragend never reaches us.
+    setTimeout(function () { el.style.opacity = '0.4'; }, 0);
   });
+  // Drop-target highlight is applied straight to the DOM (and undone the same
+  // way) instead of via render(): dragover fires constantly, and a full
+  // app.innerHTML rebuild per change made the drag visibly janky.
+  var dragHintUndo = null;
+  function clearDragHint() { if (dragHintUndo) { dragHintUndo(); dragHintUndo = null; } }
+  function applyDragHint(id, mode) {
+    clearDragHint();
+    if (id === 'root') {
+      var zone = app.querySelector('.root-drop-zone');
+      if (zone) { zone.classList.add('dragover'); dragHintUndo = function () { zone.classList.remove('dragover'); }; }
+      return;
+    }
+    var row = app.querySelector('.row-wrap[data-drag-id="' + id + '"]');
+    if (row) {
+      if (mode === 'child') {
+        var content = row.querySelector('.row-content');
+        if (content) { content.classList.add('drop-child'); dragHintUndo = function () { content.classList.remove('drop-child'); }; }
+      } else {
+        var line = document.createElement('div');
+        line.className = 'insert-line ' + (mode === 'before' ? 'insert-line-top' : 'insert-line-bottom');
+        row.appendChild(line);
+        dragHintUndo = function () { if (line.parentNode) line.parentNode.removeChild(line); };
+      }
+      return;
+    }
+    var card = app.querySelector('.mind-card[data-drag-id="' + id + '"]');
+    if (card) { card.classList.add('dragover'); dragHintUndo = function () { card.classList.remove('dragover'); }; }
+  }
   app.addEventListener('dragover', function (e) {
     var sheetEl = e.target.closest('[data-sheet-drag-id]');
     if (sheetEl && state.draggingSheetId) {
@@ -1789,7 +1824,7 @@
     var rootZone = e.target.closest('[data-root-drop]');
     if (rootZone && state.draggingId) {
       e.preventDefault();
-      if (state.dragOverId !== 'root') { state.dragOverId = 'root'; state.dragOverMode = null; render(); }
+      if (state.dragOverId !== 'root') { state.dragOverId = 'root'; state.dragOverMode = null; applyDragHint('root', null); }
       return;
     }
     var el = e.target.closest('[data-drag-id]'); if (!el) return;
@@ -1802,7 +1837,7 @@
     var rect = el.getBoundingClientRect();
     var rel = rect.height ? (e.clientY - rect.top) / rect.height : 0.5;
     var mode = rel < 0.28 ? 'before' : (rel > 0.72 ? 'after' : 'child');
-    if (state.dragOverId !== id || state.dragOverMode !== mode) { state.dragOverId = id; state.dragOverMode = mode; render(); }
+    if (state.dragOverId !== id || state.dragOverMode !== mode) { state.dragOverId = id; state.dragOverMode = mode; applyDragHint(id, mode); }
   });
   app.addEventListener('drop', function (e) {
     var sheetEl = e.target.closest('[data-sheet-drag-id]');
@@ -1816,6 +1851,7 @@
     // Move mode stays on across multiple drags -- the user turns it off
     // explicitly via the "โหมดย้ายตำแหน่ง" badge/X in the topbar
     // (case 'exit-move-mode') once they're done rearranging.
+    clearDragHint();
     state.draggingId = null; state.dragOverId = null; state.dragOverMode = null;
     state.draggingSheetId = null; state.dragOverSheetId = null;
     render();
