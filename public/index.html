@@ -169,6 +169,8 @@
   .mindmap-wrap:active { cursor: grabbing; }
   .tree-tip { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 9px 13px; margin-bottom: 18px; }
   .move-mode-tip { color: var(--primary); background: var(--primary-tint); border-color: var(--primary); font-weight: 500; }
+  .move-mode-badge { background: var(--primary); border-color: var(--primary); color: white; }
+  .move-mode-badge:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
   .move-mode-banner { position: sticky; top: 10px; left: 50%; transform: translateX(-50%); width: max-content; background: var(--primary); color: white; padding: 8px 16px; border-radius: 999px; font-size: 12.5px; font-weight: 500; z-index: 20; box-shadow: var(--shadow-md); pointer-events: none; white-space: nowrap; }
   .root-drop-zone { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--primary); background: var(--primary-tint); border: 2px dashed var(--primary); border-radius: 10px; padding: 14px; margin-bottom: 18px; }
   .root-drop-zone.dragover { background: var(--success-tint); border-color: var(--success-line); color: var(--success-line); }
@@ -1358,7 +1360,7 @@
   function renderTreeView() {
     var rows = flattenRows(state.rootIds, 0, []);
     var tip = state.moveModeActive
-      ? '<div class="tree-tip move-mode-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 9l-4 3 4 3M9 5l3-4 3 4M15 19l-3 4-3-4M19 9l4 3-4 3M2 12h20M12 2v20"/></svg>โหมดย้ายตำแหน่ง: ลากกล่องไปวางตรงกลางการ์ดอื่นเพื่อย้ายเข้าไปเป็นหมวดย่อย หรือวางใกล้ขอบบน/ล่างเพื่อแทรกที่ระดับเดียวกับการ์ดนั้น (ลากครั้งเดียวแล้วโหมดจะปิดเอง)</div>'
+      ? '<div class="tree-tip move-mode-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 9l-4 3 4 3M9 5l3-4 3 4M15 19l-3 4-3-4M19 9l4 3-4 3M2 12h20M12 2v20"/></svg>โหมดย้ายตำแหน่ง: ลากกล่องไปวางตรงกลางการ์ดอื่นเพื่อย้ายเข้าไปเป็นหมวดย่อย หรือวางใกล้ขอบบน/ล่างเพื่อแทรกที่ระดับเดียวกับการ์ดนั้น ลากได้เรื่อยๆ จนกว่าจะกดปิดที่ป้าย "โหมดย้ายตำแหน่ง" มุมซ้ายบน</div>'
       : '<div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>โหลดข้อมูลเฉพาะกิ่งที่ขยาย · คลิกขวาที่พื้นหลังเพื่อเปิดโหมดย้ายตำแหน่ง</div>';
     // While a category is being dragged, show a standing drop target for
     // "send it back to top level" -- otherwise dropping is only possible
@@ -1443,7 +1445,7 @@
     }).join('');
     var pointerActive = state.tool === 'pointer', pencilActive = state.tool === 'pencil', textActive = state.tool === 'text';
     return '<div class="mindmap-wrap" id="mindWrap" style="cursor:' + (pencilActive ? 'crosshair' : textActive ? 'text' : 'grab') + '">' +
-      (state.moveModeActive ? '<div class="move-mode-banner">โหมดย้ายตำแหน่ง: ลากการ์ดไปวางที่ต้องการ (ลากครั้งเดียวแล้วปิดเอง)</div>' : '') +
+      (state.moveModeActive ? '<div class="move-mode-banner">โหมดย้ายตำแหน่ง: ลากการ์ดไปวางที่ต้องการ (กดปิดที่ป้ายมุมซ้ายบนเมื่อเสร็จ)</div>' : '') +
       '<div class="draw-toolbar"><div class="draw-tool-row">' +
       '<button class="draw-tool-btn' + (pointerActive ? ' active' : '') + '" data-act="set-tool" data-tool="pointer" title="ตัวชี้ (โหมดปกติ)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l7.07 17 2.51-7.39L21 11.07z"/></svg></button>' +
       '<button class="draw-tool-btn' + (pencilActive ? ' active' : '') + '" data-act="set-tool" data-tool="pencil" title="ดินสอวาดเส้น"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>' +
@@ -1688,6 +1690,7 @@
       '<button class="view-toggle-btn' + (state.viewMode === 'mind' ? ' active' : '') + '" data-act="set-view" data-view="mind"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="18" cy="12" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M7.2 11.3L15.8 6.7M7.4 12h8.2M7.2 12.7l8.6 4.6"/></svg>มุมมองผัง</button></div>' +
       '<button class="btn icon-only" data-act="undo"' + (undoStack.length ? '' : ' disabled') + ' title="ย้อนกลับ (เฉพาะการแก้ไขของคุณ)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>' +
       '<button class="btn icon-only" data-act="redo"' + (redoStack.length ? '' : ' disabled') + ' title="ทำซ้ำ"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>' +
+      (state.moveModeActive ? '<button class="btn move-mode-badge" data-act="exit-move-mode" title="ออกจากโหมดย้ายตำแหน่ง"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>โหมดย้ายตำแหน่ง</button>' : '') +
       '</div>' +
       '<div class="topbar-center">' + renderLegend() + '</div>' +
       '<div class="topbar-right">' +
@@ -1810,13 +1813,11 @@
     e.preventDefault(); handleDrop(el.getAttribute('data-drag-id'), state.dragOverMode);
   });
   app.addEventListener('dragend', function () {
-    // One drag "uses up" move mode -- to drag again the user must right-click
-    // the background and choose "ย้ายตำแหน่ง" again, which is what makes
-    // this safe to leave cards draggable during the drag itself.
-    var wasNodeDrag = !!state.draggingId;
+    // Move mode stays on across multiple drags -- the user turns it off
+    // explicitly via the "โหมดย้ายตำแหน่ง" badge/X in the topbar
+    // (case 'exit-move-mode') once they're done rearranging.
     state.draggingId = null; state.dragOverId = null; state.dragOverMode = null;
     state.draggingSheetId = null; state.dragOverSheetId = null;
-    if (wasNodeDrag) state.moveModeActive = false;
     render();
   });
 
@@ -2021,8 +2022,9 @@
         state.moveCtx = null;
         state.moveModeActive = true;
         render();
-        showToast('โหมดย้ายตำแหน่ง: ลากกล่องที่ต้องการย้าย');
+        showToast('โหมดย้ายตำแหน่ง: ลากกล่องที่ต้องการย้าย แล้วกดปิดที่ป้ายมุมซ้ายบนเมื่อเสร็จ');
         break;
+      case 'exit-move-mode': state.moveModeActive = false; render(); break;
       case 'toggle-review': {
         var rNode = nodesById.get(id);
         if (rNode) {
@@ -2071,6 +2073,7 @@
     if (e.key === 'Escape' && state.lightboxSrc) { state.lightboxSrc = null; render(); }
     if (e.key === 'Escape' && state.deleteNodeConfirmId) { state.deleteNodeConfirmId = null; render(); }
     if (e.key === 'Escape' && state.moveCtx) { state.moveCtx = null; render(); }
+    if (e.key === 'Escape' && state.moveModeActive) { state.moveModeActive = false; render(); }
     var isCtrl = e.ctrlKey || e.metaKey;
     if (!isCtrl || (e.key !== 'z' && e.key !== 'Z' && e.key !== 'y' && e.key !== 'Y')) return;
     // Never hijack native in-field undo (e.g. mid-sentence Ctrl+Z while typing
