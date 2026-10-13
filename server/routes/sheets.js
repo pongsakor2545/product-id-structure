@@ -110,7 +110,7 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
       const cols = 5;
       const values = [];
       const placeholders = drawingsRes.rows.map((d, i) => {
-        values.push(id(), newSheetId, d.color, d.size, d.points);
+        values.push(id(), newSheetId, d.color, d.size, JSON.stringify(d.points));
         const base = i * cols;
         const ph = [];
         for (let c = 1; c <= cols; c++) ph.push('$' + (base + c));
