@@ -634,7 +634,27 @@
       });
     }).catch(function () { showToast('เพิ่มชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); });
   }
-  function duplicateSheet(id) { api('POST', '/api/sheets/' + id + '/duplicate').then(function (s) { state.sheets.push(s); state.contextMenuSheetId = null; switchSheet(s.id); }).catch(function () { showToast('คัดลอกชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); }); }
+  // A large sheet's duplicate can take long enough server-side that the
+  // request itself times out or the connection drops client-side even though
+  // the server goes on to finish and commit it a moment later -- so a plain
+  // network failure here doesn't necessarily mean nothing happened. Before
+  // reporting failure, re-check the sheet list for a sheet this client
+  // hasn't seen before; if the duplicate actually landed, adopt it instead
+  // of leaving the user to retry (and pile up accidental extra copies).
+  function duplicateSheet(id) {
+    var knownIds = state.sheets.map(function (s) { return s.id; });
+    api('POST', '/api/sheets/' + id + '/duplicate').then(function (s) {
+      state.sheets.push(s); state.contextMenuSheetId = null; switchSheet(s.id);
+    }).catch(function () {
+      api('GET', '/api/sheets').then(function (sheets) {
+        var found = sheets.filter(function (s) { return knownIds.indexOf(s.id) === -1; })[0];
+        state.sheets = sheets;
+        state.contextMenuSheetId = null;
+        if (found) { switchSheet(found.id); showToast('คัดลอกชีทสำเร็จ (ใช้เวลานานกว่าปกติ)'); }
+        else { render(); showToast('คัดลอกชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); }
+      }).catch(function () { showToast('คัดลอกชีทไม่สำเร็จ ลองใหม่อีกครั้ง'); });
+    });
+  }
   // Undo of a sheet delete needs the sheet's full contents (not just what's
   // cached client-side, since collapsed/unloaded branches wouldn't be there)
   // fetched *before* the delete call, then replayed through /sheets/restore.

@@ -80,18 +80,55 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
     await client.query('BEGIN');
     await client.query('INSERT INTO sheets (id, name, sort_order, color) VALUES ($1, $2, $3, $4)', [newSheetId, newSheetName, ordRows[0].next, src.color]);
 
-    for (const n of nodesRes.rows) {
+    // One multi-row INSERT per table instead of one query per row -- a sheet
+    // with hundreds/thousands of nodes awaiting each INSERT in sequence could
+    // take long enough that the client gives up and reports "failed" even
+    // though the server goes on to finish and commit successfully a moment
+    // later (the duplicate silently exists, just invisible to the client that
+    // asked for it -- a prior version of this endpoint hit exactly that).
+    if (nodesRes.rows.length) {
+      const cols = 12;
+      const values = [];
+      const placeholders = nodesRes.rows.map((n, i) => {
+        values.push(
+          idMap.get(n.id), newSheetId, n.parent_id ? idMap.get(n.parent_id) : null,
+          n.name, n.translation, n.definition, newImageUrls.get(n.id) || null,
+          n.definition_color, n.needs_review, n.level, n.sort_order, n.collapsed
+        );
+        const base = i * cols;
+        const ph = [];
+        for (let c = 1; c <= cols; c++) ph.push('$' + (base + c));
+        return '(' + ph.join(',') + ')';
+      });
       await client.query(
         `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, level, sort_order, collapsed)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [idMap.get(n.id), newSheetId, n.parent_id ? idMap.get(n.parent_id) : null, n.name, n.translation, n.definition, newImageUrls.get(n.id) || null, n.definition_color, n.needs_review, n.level, n.sort_order, n.collapsed]
+         VALUES ${placeholders.join(',')}`,
+        values
       );
     }
-    for (const d of drawingsRes.rows) {
-      await client.query('INSERT INTO drawings (id, sheet_id, color, size, points) VALUES ($1,$2,$3,$4,$5)', [id(), newSheetId, d.color, d.size, d.points]);
+    if (drawingsRes.rows.length) {
+      const cols = 5;
+      const values = [];
+      const placeholders = drawingsRes.rows.map((d, i) => {
+        values.push(id(), newSheetId, d.color, d.size, d.points);
+        const base = i * cols;
+        const ph = [];
+        for (let c = 1; c <= cols; c++) ph.push('$' + (base + c));
+        return '(' + ph.join(',') + ')';
+      });
+      await client.query(`INSERT INTO drawings (id, sheet_id, color, size, points) VALUES ${placeholders.join(',')}`, values);
     }
-    for (const t of textsRes.rows) {
-      await client.query('INSERT INTO texts (id, sheet_id, x, y, w, h, color, size, content) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id(), newSheetId, t.x, t.y, t.w, t.h, t.color, t.size, t.content]);
+    if (textsRes.rows.length) {
+      const cols = 9;
+      const values = [];
+      const placeholders = textsRes.rows.map((t, i) => {
+        values.push(id(), newSheetId, t.x, t.y, t.w, t.h, t.color, t.size, t.content);
+        const base = i * cols;
+        const ph = [];
+        for (let c = 1; c <= cols; c++) ph.push('$' + (base + c));
+        return '(' + ph.join(',') + ')';
+      });
+      await client.query(`INSERT INTO texts (id, sheet_id, x, y, w, h, color, size, content) VALUES ${placeholders.join(',')}`, values);
     }
     await client.query('COMMIT');
 
