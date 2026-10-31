@@ -189,9 +189,6 @@
   .insert-line-bottom { bottom: -1px; }
   .guide-col { position: relative; width: 24px; height: 60px; flex-shrink: 0; }
   .row-content { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; height: 60px; padding: 0 8px 0 2px; border-radius: 8px; cursor: pointer; }
-  .chevron-btn { width: 22px; height: 22px; flex-shrink: 0; border: none; background: transparent; border-radius: 5px; display: flex; align-items: center; justify-content: center; color: var(--text-faint); cursor: pointer; }
-  .chevron-btn:hover { background: rgba(120,120,140,0.14); color: var(--text); }
-  .chevron-btn svg { transition: transform .12s ease; }
   .chevron-spacer { width: 22px; flex-shrink: 0; }
   .thumb-img { width: 32px; height: 32px; border-radius: 8px; object-fit: cover; flex-shrink: 0; background: var(--surface-2); }
   .thumb-fallback { width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 700; color: white; font-family: 'Sora', sans-serif; }
@@ -257,8 +254,7 @@
   .mind-en { font-family: 'Sora', 'Noto Sans Thai', sans-serif; font-size: 11.5px; font-weight: 700; color: var(--text); line-height: 1.3; overflow-wrap: break-word; word-break: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
   .mind-th { font-size: 9.5px; font-weight: 400; color: var(--thai-blue); line-height: 1.35; overflow-wrap: break-word; word-break: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
   .mind-level-tag { position: absolute; top: -9px; left: 13px; font-family: 'Sora', sans-serif; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 6px; letter-spacing: 0.02em; box-shadow: var(--shadow-sm); border: 1.5px solid var(--surface); }
-  .mind-toggle-pill { position: absolute; right: -11px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--border-strong); font-size: 10.5px; font-weight: 700; color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 2; }
-  .mind-toggle-pill:hover { background: var(--surface-2); }
+  .mind-toggle-pill { position: absolute; right: -11px; top: 50%; transform: translateY(-50%); width: 22px; height: 22px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--border-strong); font-size: 10.5px; font-weight: 700; color: var(--text-muted); display: flex; align-items: center; justify-content: center; z-index: 2; }
   .mind-add-btn { position: absolute; right: -11px; bottom: -11px; width: 22px; height: 22px; border-radius: 50%; background: var(--primary); border: none; color: white; display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: 0; transition: opacity .1s ease; z-index: 2; }
   .mind-card:hover .mind-add-btn { opacity: 1; }
 
@@ -296,6 +292,13 @@
   .sheet-tab-input { height: 30px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--primary); font-size: 12.5px; width: 120px; flex-shrink: 0; background: var(--surface); color: var(--text); }
   .sheet-add-btn { width: 28px; height: 28px; border-radius: 7px; border: 1px dashed var(--border-strong); background: transparent; color: var(--text-muted); cursor: pointer; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
   .sheet-add-btn:hover { background: var(--surface-2); color: var(--text); }
+  .sheet-list-menu { padding: 8px; width: 240px; gap: 6px; max-height: 360px; }
+  .sheet-list-search { width: 100%; height: 32px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font-size: 13px; }
+  .sheet-list-items { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; max-height: 280px; }
+  .sheet-list-item { display: flex; align-items: center; height: 32px; padding: 0 8px; border-radius: 6px; border: none; background: transparent; color: var(--text); font-size: 13px; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sheet-list-item:hover { background: var(--surface-2); }
+  .sheet-list-item.active { background: var(--primary-tint); color: var(--primary); font-weight: 600; }
+  .sheet-list-empty { padding: 10px 8px; font-size: 12.5px; color: var(--text-faint); text-align: center; }
 
   .toast { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 8px; font-size: 13px; box-shadow: var(--shadow-md); z-index: 40; }
 </style>
@@ -363,6 +366,7 @@
     selectedId: null, draggingId: null, dragOverId: null, dragOverMode: null,
     draggingSheetId: null, dragOverSheetId: null,
     moveModeActive: false, moveCtx: null,
+    sheetListCtx: null, sheetListQuery: '',
     viewMode: 'tree', zoom: 1, hiddenLevels: new Set(),
     tool: 'pointer', pencilColor: '#1d1d1f', pencilSize: 3, textColor: '#1d1d1f', textSize: 16,
     drawings: [], texts: [],
@@ -412,9 +416,9 @@
     if (!node || node.childrenLoaded || pendingFetches.has(nodeId)) return;
     pendingFetches.add(nodeId);
     // Tracks progress for the *current wave* of background fetches, not the
-    // sheet's grand total -- a collapsed branch is never supposed to load
-    // until someone expands it, so counting it against the total would leave
-    // the percentage permanently stuck below 100 forever.
+    // sheet's grand total -- a hidden-level branch (see hiddenLevels) still
+    // loads in the background but was never counted reliably against a
+    // grand total, which left the percentage stuck below 100 forever.
     if (state.loadBurstTotal === state.loadBurstDone) { state.loadBurstTotal = 0; state.loadBurstDone = 0; }
     state.loadBurstTotal++;
     api('GET', '/api/sheets/' + state.activeSheetId + '/nodes?parent=' + encodeURIComponent(nodeId)).then(function (children) {
@@ -447,8 +451,6 @@
       }
       var aid = chain[i];
       var proceed = function () {
-        var anode = nodesById.get(aid);
-        if (anode && anode.collapsed) { anode.collapsed = false; api('PATCH', '/api/nodes/' + aid, { collapsed: false }).catch(function () {}); }
         ensureChildrenLoaded(aid);
         var check = setInterval(function () {
           var n2 = nodesById.get(aid);
@@ -710,21 +712,6 @@
   }
 
   // ---------- node mutations ----------
-  function setNodeCollapsed(id, collapsed) {
-    var node = nodesById.get(id); if (!node) return;
-    node.collapsed = collapsed;
-    render();
-    api('PATCH', '/api/nodes/' + id, { collapsed: collapsed }).catch(function () {});
-  }
-  function toggleCollapse(id) {
-    var node = nodesById.get(id); if (!node) return;
-    var before = node.collapsed, after = !before;
-    setNodeCollapsed(id, after);
-    pushUndo({
-      undo: function () { setNodeCollapsed(id, before); },
-      redo: function () { setNodeCollapsed(id, after); }
-    });
-  }
   // The tree/mindmap position of every card can shift once a node gains its
   // first child (the auto-layout re-packs around it), and render() keeps
   // whatever scroll position was already there -- so a newly added card can
@@ -1144,15 +1131,26 @@
 
     return { header: header, rows: dataRows, merges: merges };
   }
+  // Used to silently miss whatever branch hadn't been expanded/loaded yet,
+  // since it built the export straight from the client cache. Now it loads
+  // the complete sheet from the server first (ensureSubtreeLoaded, already
+  // used for delete-undo snapshots) so the export is always everything in
+  // the sheet, regardless of what happens to be expanded on screen.
   function downloadCurrentViewAsExcel() {
-    var h = buildHierarchyExport(state.rootIds);
-    var bytes = buildXlsxBytes('Product ID', h.header, h.rows, h.merges);
-    var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'product-id-structure.xlsx';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    showToast('ดาวน์โหลด Excel แล้ว (เฉพาะกิ่งที่โหลด/ขยายไว้ในหน้าจอ)');
+    showToast('กำลังเตรียมข้อมูลทั้งชีทสำหรับ Excel...');
+    Promise.all(state.rootIds.map(ensureSubtreeLoaded)).then(function () {
+      var h = buildHierarchyExport(state.rootIds);
+      var bytes = buildXlsxBytes('Product ID', h.header, h.rows, h.merges);
+      var blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'product-id-structure.xlsx';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      render();
+      showToast('ดาวน์โหลด Excel แล้ว (ทั้งชีท)');
+    }).catch(function () {
+      showToast('เตรียมข้อมูลสำหรับ Excel ไม่สำเร็จ ลองใหม่อีกครั้ง');
+    });
   }
 
   function showToast(msg) {
@@ -1387,7 +1385,10 @@
       var isLast = idx === ids.length - 1;
       var hasChildren = node.childCount > 0;
       if (isLevelVisible(node.level)) rows.push({ node: node, depth: depth, isLast: isLast, hasChildren: hasChildren, ancestorLines: ancestorLines.slice() });
-      if (hasChildren && !node.collapsed) {
+      // Categories are always expanded (no per-node collapse) -- every child
+      // branch loads and shows automatically; only the Level 1-5 toggles
+      // above can still hide whole levels.
+      if (hasChildren) {
         if (!node.childrenLoaded) { ensureChildrenLoaded(id); }
         else rows = rows.concat(flattenRows(node.childrenIds, depth + 1, ancestorLines.concat(!isLast)));
       }
@@ -1400,9 +1401,9 @@
       return '<div class="guide-col">' + (active ? '<div style="position:absolute;left:11px;top:0;width:1.5px;height:60px;background:var(--text-muted);"></div>' : '') + '</div>';
     }).join('');
     var elbow = row.depth > 0 ? '<div class="guide-col"><div style="position:absolute;left:11px;top:0;width:1.5px;height:' + (row.isLast ? '30px' : '60px') + ';background:var(--text-muted);"></div><div style="position:absolute;left:11px;top:30px;width:13px;height:1.5px;background:var(--text-muted);"></div></div>' : '';
-    var chevron = row.hasChildren
-      ? '<button class="chevron-btn" data-act="toggle-collapse" data-id="' + node.id + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(' + (node.collapsed ? '0deg' : '90deg') + ')"><path d="M9 6l6 6-6 6"/></svg></button>'
-      : '<div class="chevron-spacer"></div>';
+    // Categories are always expanded now (see flattenRows) -- no per-node
+    // collapse toggle, just a fixed-width spacer to keep indentation lined up.
+    var chevron = '<div class="chevron-spacer"></div>';
     var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" data-act="view-image" data-src="' + esc(imageSrc(node)) + '" title="คลิกเพื่อดูรูปเต็ม" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
     var thaiText = (node.translation && node.translation.trim()) ? esc(node.translation) : '<span style="opacity:.45;font-style:italic;">—</span>';
     var childCount = row.hasChildren ? '<span class="child-count">' + node.childCount + '</span>' : '';
@@ -1441,7 +1442,7 @@
     var rows = flattenRows(state.rootIds, 0, []);
     var tip = state.moveModeActive
       ? '<div class="tree-tip move-mode-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 9l-4 3 4 3M9 5l3-4 3 4M15 19l-3 4-3-4M19 9l4 3-4 3M2 12h20M12 2v20"/></svg>โหมดย้ายตำแหน่ง: ลากกล่องไปวางตรงกลางการ์ดอื่นเพื่อย้ายเข้าไปเป็นหมวดย่อย หรือวางใกล้ขอบบน/ล่างเพื่อแทรกที่ระดับเดียวกับการ์ดนั้น ลากได้เรื่อยๆ จนกว่าจะกดปิดที่ป้าย "โหมดย้ายตำแหน่ง" มุมซ้ายบน</div>'
-      : '<div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>โหลดข้อมูลเฉพาะกิ่งที่ขยาย · คลิกขวาที่พื้นหลังเพื่อเปิดโหมดย้ายตำแหน่ง</div>';
+      : '<div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>ทุกหมวดแสดงหมวดย่อยตลอดเวลา ใช้ปุ่ม Level ด้านบนเพื่อซ่อนบางระดับ · คลิกขวาที่พื้นหลังเพื่อเปิดโหมดย้ายตำแหน่ง</div>';
     // While a category is being dragged, show a standing drop target for
     // "send it back to top level" -- otherwise dropping is only possible
     // onto another card, which always nests it deeper, with no way to drag
@@ -1463,7 +1464,7 @@
       ids.forEach(function (id) {
         var node = nodesById.get(id); if (!node) return;
         var visDepth = isLevelVisible(node.level) ? parentVisDepth + 1 : parentVisDepth;
-        var expanded = node.childCount > 0 && !node.collapsed;
+        var expanded = node.childCount > 0;
         if (expanded && !node.childrenLoaded) ensureChildrenLoaded(id);
         var kids = (expanded && node.childrenLoaded) ? node.childrenIds : [];
         if (!kids.length) { node._px = PAD + visDepth * LEVEL_GAP; node._py = cursor.v; cursor.v += ROW_H; }
@@ -1487,7 +1488,7 @@
             edges.push({ path: 'M ' + px + ' ' + py + ' L ' + midX + ' ' + py + ' L ' + midX + ' ' + cy + ' L ' + cx + ' ' + cy, stroke: colorForLevel(node.level).solid });
           }
         }
-        var expanded = node.childCount > 0 && !node.collapsed;
+        var expanded = node.childCount > 0;
         var kids = (expanded && node.childrenLoaded) ? node.childrenIds : [];
         if (kids.length) collect(kids, visible ? node : visibleParent);
       });
@@ -1504,7 +1505,7 @@
     if (node.verified) cls += ' verified';
     var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" data-act="view-image" data-src="' + esc(imageSrc(node)) + '" title="คลิกเพื่อดูรูปเต็ม" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
     var thaiText = (node.translation && node.translation.trim()) ? esc(node.translation) : '<span style="opacity:.45;font-style:italic;">—</span>';
-    var pill = node.childCount > 0 ? '<div class="mind-toggle-pill" data-act="toggle-collapse" data-id="' + node.id + '">' + node.childCount + '</div>' : '';
+    var pill = node.childCount > 0 ? '<div class="mind-toggle-pill" title="' + node.childCount + ' หมวดย่อย">' + node.childCount + '</div>' : '';
     var reviewBadge = node.needsReview ? '<span class="review-badge review-badge-float" title="รอการตรวจสอบ"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>' : '';
     var verifyCheck = '<button class="mind-verify-check' + (node.verified ? ' checked' : '') + '" data-act="toggle-verify" data-id="' + node.id + '" title="' + (node.verified ? 'ตรวจสอบผ่านแล้ว (กดเพื่อยกเลิก)' : 'ติ๊กเมื่อหมวดนี้ตรวจสอบผ่านแล้ว') + '"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>';
     var noteBtn = '<button class="mind-note-btn' + (node.note ? ' has-note' : '') + '" data-act="open-note" data-id="' + node.id + '" title="โน้ต"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H9l-5 5V4Z"/><path d="M8 9h8M8 13h5"/></svg></button>';
@@ -1578,10 +1579,28 @@
       return '<button class="' + cls + '" draggable="true" data-sheet-drag-id="' + s.id + '" data-act="switch-sheet" data-id="' + s.id + '" data-dblact="start-rename" data-ctxact="sheet-ctx">' + dot + esc(s.name) + '</button>';
     }).join('');
     return '<div class="sheet-tabs-bar">' +
+      '<button class="sheet-nav-btn" data-act="toggle-sheet-list" title="ค้นหา/รายการชีททั้งหมด"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h7"/></svg></button>' +
       '<button class="sheet-nav-btn" data-act="scroll-sheets" data-dir="-1" title="เลื่อนซ้าย"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></button>' +
       '<button class="sheet-nav-btn" data-act="scroll-sheets" data-dir="1" title="เลื่อนขวา"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>' +
       '<div class="sheet-tabs" id="sheetTabsScroll">' + tabs + '</div>' +
       '<button class="sheet-add-btn" data-act="add-sheet" title="เพิ่มชีทใหม่"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>' +
+      renderSheetListMenu() +
+      '</div>';
+  }
+  // Popover for jumping straight to any sheet by name, with a search box --
+  // the tab bar alone doesn't scale once there are many sheets to scroll
+  // through to find one.
+  function renderSheetListMenu() {
+    if (!state.sheetListCtx) return '';
+    var q = (state.sheetListQuery || '').trim().toLowerCase();
+    var filtered = state.sheets.filter(function (s) { return !q || s.name.toLowerCase().indexOf(q) !== -1; });
+    var items = filtered.map(function (s) {
+      var dot = s.color ? '<span class="sheet-tab-dot" style="background:' + esc(s.color) + '"></span>' : '';
+      return '<button class="sheet-list-item' + (s.id === state.activeSheetId ? ' active' : '') + '" data-act="pick-sheet" data-id="' + s.id + '">' + dot + esc(s.name) + '</button>';
+    }).join('') || '<div class="sheet-list-empty">ไม่พบชีท</div>';
+    return '<div class="ctx-overlay" data-act="close-sheet-list"></div><div class="ctx-menu sheet-list-menu" style="left:' + state.sheetListCtx.x + 'px;bottom:50px;">' +
+      '<input class="sheet-list-search" type="text" placeholder="ค้นหาชีท..." value="' + esc(state.sheetListQuery || '') + '" data-act="sheet-list-query" />' +
+      '<div class="sheet-list-items">' + items + '</div>' +
       '</div>';
   }
   function renderSheetCtxMenu() {
@@ -1789,7 +1808,7 @@
       '</div>' +
       '<div class="topbar-center">' + renderLegend() + '</div>' +
       '<div class="topbar-right">' +
-      '<button class="btn" data-act="download-excel" title="ดาวน์โหลด Excel ของกิ่งที่โหลดอยู่"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>ดาวน์โหลด Excel</button>' +
+      '<button class="btn" data-act="download-excel" title="ดาวน์โหลด Excel ทั้งชีท"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>ดาวน์โหลด Excel</button>' +
       '<button class="btn' + (state.chatOpen ? ' btn-primary' : '') + '" data-act="toggle-chat" title="ค้นหาว่าสินค้าควรอยู่หมวดไหน"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>ถามหาหมวดหมู่</button>' +
       '<button class="btn btn-primary" data-act="add-root"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>เพิ่มหมวดหมู่หลัก</button>' +
       '<div class="people-anchor"><div class="avatar-stack" data-act="toggle-people" title="ดูรายชื่อผู้ใช้งานออนไลน์">' + avatarsHtml + '</div>' + (state.peopleOpen ? renderPeoplePopover(others) : '') + '</div>' +
@@ -1998,6 +2017,13 @@
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'my-name-input') myName = e.target.value;
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'delete-sheet-password') { state.deleteSheetPasswordInput = e.target.value; state.deleteSheetError = false; }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'chat-input') state.chatInput = e.target.value;
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'sheet-list-query') {
+      state.sheetListQuery = e.target.value;
+      var sheetListSel = e.target.selectionStart, sheetListSel2 = e.target.selectionEnd;
+      render();
+      var sheetListRestored = document.querySelector('[data-act="sheet-list-query"]');
+      if (sheetListRestored) { sheetListRestored.focus(); try { sheetListRestored.setSelectionRange(sheetListSel, sheetListSel2); } catch (er) {} }
+    }
   });
 
   app.addEventListener('blur', function (e) {
@@ -2014,6 +2040,14 @@
       else if (e.key === 'Escape') { state.deleteSheetPromptId = null; render(); }
     }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'chat-input' && e.key === 'Enter') { e.preventDefault(); sendChatMessage(); }
+    if (e.target.getAttribute && e.target.getAttribute('data-act') === 'sheet-list-query') {
+      if (e.key === 'Escape') { state.sheetListCtx = null; render(); }
+      else if (e.key === 'Enter') {
+        var q = (state.sheetListQuery || '').trim().toLowerCase();
+        var match = state.sheets.filter(function (s) { return !q || s.name.toLowerCase().indexOf(q) !== -1; })[0];
+        if (match) { state.sheetListCtx = null; switchSheet(match.id); }
+      }
+    }
   });
   // A re-render mid-edit (e.g. a slow PATCH response, or the focus/caret
   // preservation cycle itself) detaches and reinserts the field's DOM node,
@@ -2083,7 +2117,6 @@
     if (!el) return;
     var act = el.getAttribute('data-act'), id = el.getAttribute('data-id');
     switch (act) {
-      case 'toggle-collapse': toggleCollapse(id); break;
       case 'select-node': if (state.tool === 'pointer') { state.selectedId = id; render(); } break;
       case 'add-child': addChild(id); break;
       case 'delete-node': state.deleteNodeConfirmId = id; render(); break;
@@ -2112,6 +2145,17 @@
         if (scrollEl) scrollEl.scrollLeft += Number(el.getAttribute('data-dir')) * 160;
         break;
       }
+      case 'toggle-sheet-list': {
+        if (state.sheetListCtx) { state.sheetListCtx = null; render(); break; }
+        var listRect = el.getBoundingClientRect();
+        state.sheetListQuery = '';
+        state.sheetListCtx = { x: listRect.left };
+        render();
+        setTimeout(function () { var sInp = document.querySelector('[data-act="sheet-list-query"]'); if (sInp) sInp.focus(); }, 0);
+        break;
+      }
+      case 'close-sheet-list': state.sheetListCtx = null; render(); break;
+      case 'pick-sheet': state.sheetListCtx = null; switchSheet(id); break;
       case 'close-sheet-ctx': state.contextMenuSheetId = null; render(); break;
       case 'sheet-rename': {
         var rsh = state.sheets.find(function (s) { return s.id === state.contextMenuSheetId; });
@@ -2228,6 +2272,7 @@
     if (e.key === 'Escape' && state.deleteNodeConfirmId) { state.deleteNodeConfirmId = null; render(); }
     if (e.key === 'Escape' && state.noteCtx) { closeNote(); }
     if (e.key === 'Escape' && state.moveCtx) { state.moveCtx = null; render(); }
+    if (e.key === 'Escape' && state.sheetListCtx) { state.sheetListCtx = null; render(); }
     if (e.key === 'Escape' && state.moveModeActive) { state.moveModeActive = false; render(); }
     var isCtrl = e.ctrlKey || e.metaKey;
     if (!isCtrl || (e.key !== 'z' && e.key !== 'Z' && e.key !== 'y' && e.key !== 'Y')) return;
