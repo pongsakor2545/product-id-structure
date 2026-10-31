@@ -1414,7 +1414,7 @@
     var rowCls = 'row-content' + (node.needsReview ? ' needs-review' : '') + (node.verified ? ' verified' : '');
     var reviewBadge = node.needsReview ? '<span class="review-badge" title="รอการตรวจสอบ"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>' : '';
     var verifyCheck = '<button class="verify-check' + (node.verified ? ' checked' : '') + '" data-act="toggle-verify" data-id="' + node.id + '" title="' + (node.verified ? 'ตรวจสอบผ่านแล้ว (กดเพื่อยกเลิก)' : 'ติ๊กเมื่อหมวดนี้ตรวจสอบผ่านแล้ว') + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>';
-    var noteBtn = '<button class="note-btn' + (node.note ? ' has-note' : '') + '" data-act="open-note" data-id="' + node.id + '" title="โน้ต">' +
+    var noteBtn = '<button class="note-btn' + (node.note ? ' has-note' : '') + '" data-act="open-note" data-id="' + node.id + '" title="Note">' +
       '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H9l-5 5V4Z"/><path d="M8 9h8M8 13h5"/></svg></button>';
     return (
       '<div class="row-wrap"' + (state.moveModeActive ? ' draggable="true" data-drag-id="' + node.id + '"' : '') + ' data-row-id="' + node.id + '">' + insertLine + guides + elbow +
@@ -1515,7 +1515,7 @@
     var pill = node.childCount > 0 ? '<div class="mind-toggle-pill" title="' + node.childCount + ' หมวดย่อย">' + node.childCount + '</div>' : '';
     var reviewBadge = node.needsReview ? '<span class="review-badge review-badge-float" title="รอการตรวจสอบ"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>' : '';
     var verifyCheck = '<button class="mind-verify-check' + (node.verified ? ' checked' : '') + '" data-act="toggle-verify" data-id="' + node.id + '" title="' + (node.verified ? 'ตรวจสอบผ่านแล้ว (กดเพื่อยกเลิก)' : 'ติ๊กเมื่อหมวดนี้ตรวจสอบผ่านแล้ว') + '"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>';
-    var noteBtn = '<button class="mind-note-btn' + (node.note ? ' has-note' : '') + '" data-act="open-note" data-id="' + node.id + '" title="โน้ต"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H9l-5 5V4Z"/><path d="M8 9h8M8 13h5"/></svg></button>';
+    var noteBtn = '<button class="mind-note-btn' + (node.note ? ' has-note' : '') + '" data-act="open-note" data-id="' + node.id + '" title="Note"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H9l-5 5V4Z"/><path d="M8 9h8M8 13h5"/></svg></button>';
     return '<div class="' + cls + '"' + (state.moveModeActive ? ' draggable="true" data-drag-id="' + node.id + '"' : '') + ' data-card-id="' + node.id + '" data-act="select-node" data-id="' + node.id + '" style="left:' + node._px + 'px;top:' + (node._py - cardH / 2) + 'px;">' +
       '<span class="mind-level-tag" style="background:' + colors.tintBg + ';color:' + colors.tintText + '">L' + node.level + '</span>' +
       reviewBadge + noteBtn +
@@ -1645,7 +1645,7 @@
     var node = nodesById.get(state.noteCtx.id);
     if (!node) return '';
     return '<div class="ctx-overlay" data-act="close-note-ctx"></div><div class="ctx-menu note-ctx-menu" style="left:' + state.noteCtx.x + 'px;top:' + state.noteCtx.y + 'px;">' +
-      '<div class="note-ctx-title">โน้ต: ' + esc(node.name) + '</div>' +
+      '<div class="note-ctx-title">Note: ' + esc(node.name) + '</div>' +
       '<textarea class="note-ctx-textarea" data-note-id="' + node.id + '" placeholder="พิมพ์โน้ตสำหรับหมวดหมู่นี้ เช่น สิ่งที่ต้องแก้ไขจากห้องประชุม...">' + esc(node.note || '') + '</textarea>' +
       '<div class="modal-actions"><button class="btn btn-primary small" data-act="close-note-ctx">เสร็จสิ้น</button></div>' +
       '</div>';
