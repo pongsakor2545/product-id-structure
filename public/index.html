@@ -1457,24 +1457,31 @@
   function computeMindLayout(rootIds) {
     var LEVEL_GAP = 276, ROW_H = 108, CARD_H = 56, CARD_W = 230, PAD = 40;
     var cursor = { v: PAD };
-    // A hidden level shouldn't leave a horizontal gap or a dangling
-    // connector -- visDepth only advances on a visible node, so a visible
-    // node's indent reflects its visible ancestors, not its raw tree depth.
-    (function place(ids, parentVisDepth) {
-      ids.forEach(function (id) {
-        var node = nodesById.get(id); if (!node) return;
-        var visDepth = isLevelVisible(node.level) ? parentVisDepth + 1 : parentVisDepth;
-        var expanded = node.childCount > 0;
-        if (expanded && !node.childrenLoaded) ensureChildrenLoaded(id);
-        var kids = (expanded && node.childrenLoaded) ? node.childrenIds : [];
-        if (!kids.length) { node._px = PAD + visDepth * LEVEL_GAP; node._py = cursor.v; cursor.v += ROW_H; }
-        else {
-          place(kids, visDepth);
-          var first = nodesById.get(kids[0]), last = nodesById.get(kids[kids.length - 1]);
-          node._px = PAD + visDepth * LEVEL_GAP; node._py = (first._py + last._py) / 2;
-        }
-      });
-    })(rootIds, -1);
+    // A hidden level shouldn't leave a horizontal gap, a dangling connector,
+    // or an empty vertical row -- place() returns null for a branch that
+    // turns out to have nothing visible in it (after loading far enough to
+    // tell), and a hidden node with visible descendants never reserves a row
+    // for itself, only its visible descendants do. Still always triggers the
+    // load for an unloaded branch regardless of its own visibility, so a
+    // visible level further down a hidden one keeps cascading in.
+    function place(id, parentVisDepth) {
+      var node = nodesById.get(id); if (!node) return null;
+      var visible = isLevelVisible(node.level);
+      var visDepth = visible ? parentVisDepth + 1 : parentVisDepth;
+      var expanded = node.childCount > 0;
+      if (expanded && !node.childrenLoaded) ensureChildrenLoaded(id);
+      var childIds = (expanded && node.childrenLoaded) ? node.childrenIds : [];
+      var placedKids = childIds.map(function (cid) { return place(cid, visDepth); }).filter(Boolean);
+      if (!placedKids.length) {
+        if (!visible) return null;
+        node._px = PAD + visDepth * LEVEL_GAP; node._py = cursor.v; cursor.v += ROW_H;
+      } else {
+        var first = placedKids[0], last = placedKids[placedKids.length - 1];
+        node._px = PAD + visDepth * LEVEL_GAP; node._py = (first._py + last._py) / 2;
+      }
+      return node;
+    }
+    rootIds.forEach(function (id) { place(id, -1); });
     var mindNodes = [], edges = [], maxX = 0, maxY = 0;
     (function collect(ids, visibleParent) {
       ids.forEach(function (id) {
