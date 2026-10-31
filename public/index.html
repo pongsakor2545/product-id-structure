@@ -238,6 +238,20 @@
   .row-content.needs-review { box-shadow: 0 0 0 2px rgba(234,179,8,0.35), 0 0 12px 2px rgba(234,179,8,0.4); }
   .review-badge { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #eab308; color: white; flex-shrink: 0; }
   .review-badge-float { position: absolute; top: -9px; right: -9px; width: 22px; height: 22px; box-shadow: var(--shadow-sm); z-index: 2; }
+  .mind-card.verified { border-color: var(--success-line) !important; box-shadow: 0 0 0 3px var(--success-tint) !important; }
+  .row-content.verified { box-shadow: 0 0 0 2px var(--success-tint); }
+  .verify-check, .note-btn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text-faint); cursor: pointer; flex-shrink: 0; }
+  .verify-check:hover, .note-btn:hover { border-color: var(--border-strong); color: var(--text); }
+  .verify-check.checked { background: var(--success-line); border-color: var(--success-line); color: white; }
+  .note-btn.has-note { background: var(--primary-tint); border-color: var(--primary); color: var(--primary); }
+  .mind-verify-check { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid var(--border); background: var(--surface); color: transparent; cursor: pointer; flex-shrink: 0; }
+  .mind-verify-check.checked { background: var(--success-line); border-color: var(--success-line); color: white; }
+  .mind-note-btn { position: absolute; left: -11px; bottom: -11px; width: 22px; height: 22px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--border-strong); color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 2; opacity: 0.6; }
+  .mind-note-btn:hover { opacity: 1; }
+  .mind-note-btn.has-note { background: var(--primary); border-color: var(--primary); color: white; opacity: 1; }
+  .note-ctx-menu { padding: 10px; width: 260px; gap: 6px; }
+  .note-ctx-title { font-size: 12px; font-weight: 600; color: var(--text-muted); padding: 0 2px; }
+  .note-ctx-textarea { width: 100%; min-height: 100px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px; font-family: inherit; color: var(--text); background: var(--surface-2); }
   .mind-card .thumb-img, .mind-card .thumb-fallback { width: 42px; height: 42px; border-radius: 10px; font-size: 16px; flex-shrink: 0; }
   .mind-text-stack { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
   .mind-en { font-family: 'Sora', 'Noto Sans Thai', sans-serif; font-size: 11.5px; font-weight: 700; color: var(--text); line-height: 1.3; overflow-wrap: break-word; word-break: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
@@ -356,7 +370,7 @@
     shareOpen: false, copied: false,
     renamingSheetId: null, renameDraft: '',
     contextMenuSheetId: null, contextMenuX: 0,
-    annoCtx: null, nodeCtx: null,
+    annoCtx: null, nodeCtx: null, noteCtx: null,
     lightboxSrc: null,
     deleteNodeConfirmId: null,
     deleteSheetPromptId: null, deleteSheetPasswordInput: '', deleteSheetError: false,
@@ -377,6 +391,7 @@
   function toCacheNode(server, parentId) {
     return { id: server.id, name: server.name, translation: server.translation, definition: server.definition,
       level: server.level, collapsed: !!server.collapsed, imageUrl: server.imageUrl || null, definitionColor: server.definitionColor || null, needsReview: !!server.needsReview, childCount: server.childCount || 0,
+      verified: !!server.verified, note: server.note || '',
       sortOrder: server.sortOrder != null ? server.sortOrder : null,
       parentId: parentId, childrenLoaded: false, childrenIds: [] };
   }
@@ -811,6 +826,47 @@
     node.needsReview = val;
     render();
     api('PATCH', '/api/nodes/' + id, { needsReview: val }).catch(function () { showToast('บันทึกไม่สำเร็จ'); });
+  }
+  // "Checked off" review mode -- separate from needsReview (which flags a
+  // category as needing attention): this instead marks one as already
+  // verified/approved, toggled with one click directly on its card/row.
+  function toggleVerified(id) {
+    var node = nodesById.get(id); if (!node) return;
+    var before = node.verified, after = !before;
+    setNodeField(id, 'verified', after);
+    pushUndo({
+      undo: function () { setNodeField(id, 'verified', before); },
+      redo: function () { setNodeField(id, 'verified', after); }
+    });
+  }
+  // Per-category free-text note (for things to fix found during a review
+  // meeting), edited in a small popover rather than the side panel so it's
+  // reachable straight from the card. Typing doesn't trigger a render (that
+  // would steal focus out of the textarea mid-keystroke, see the caret-jump
+  // fix elsewhere in this file) -- only PATCHes on a debounce; one undo entry
+  // is pushed for the whole edit when the popover closes, not per keystroke.
+  var noteEditBefore = null;
+  function openNote(id, x, y) {
+    var node = nodesById.get(id); if (!node) return;
+    noteEditBefore = node.note || '';
+    state.noteCtx = { id: id, x: x, y: y };
+    render();
+    setTimeout(function () { var ta = document.querySelector('.note-ctx-textarea'); if (ta) ta.focus(); }, 0);
+  }
+  function closeNote() {
+    if (!state.noteCtx) return;
+    var id = state.noteCtx.id;
+    var node = nodesById.get(id);
+    state.noteCtx = null;
+    render();
+    if (node && noteEditBefore !== null && node.note !== noteEditBefore) {
+      var before = noteEditBefore, after = node.note;
+      pushUndo({
+        undo: function () { setNodeField(id, 'note', before); },
+        redo: function () { setNodeField(id, 'note', after); }
+      });
+    }
+    noteEditBefore = null;
   }
   function updateSelected(field, value) {
     var node = nodesById.get(state.selectedId); if (!node) return;
@@ -1354,13 +1410,16 @@
     var rowStyle = node.id === state.selectedId ? 'background:var(--primary-tint);' : (dragMode === 'child' ? 'background:var(--success-tint);outline:1.5px dashed var(--success-line);outline-offset:-2px;' : '');
     if (node.id === state.draggingId) rowStyle += 'opacity:0.4;';
     var insertLine = dragMode === 'before' ? '<div class="insert-line insert-line-top"></div>' : (dragMode === 'after' ? '<div class="insert-line insert-line-bottom"></div>' : '');
-    var rowCls = 'row-content' + (node.needsReview ? ' needs-review' : '');
+    var rowCls = 'row-content' + (node.needsReview ? ' needs-review' : '') + (node.verified ? ' verified' : '');
     var reviewBadge = node.needsReview ? '<span class="review-badge" title="รอการตรวจสอบ"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>' : '';
+    var verifyCheck = '<button class="verify-check' + (node.verified ? ' checked' : '') + '" data-act="toggle-verify" data-id="' + node.id + '" title="' + (node.verified ? 'ตรวจสอบผ่านแล้ว (กดเพื่อยกเลิก)' : 'ติ๊กเมื่อหมวดนี้ตรวจสอบผ่านแล้ว') + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>';
+    var noteBtn = '<button class="note-btn' + (node.note ? ' has-note' : '') + '" data-act="open-note" data-id="' + node.id + '" title="โน้ต">' +
+      '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H9l-5 5V4Z"/><path d="M8 9h8M8 13h5"/></svg></button>';
     return (
       '<div class="row-wrap"' + (state.moveModeActive ? ' draggable="true" data-drag-id="' + node.id + '"' : '') + ' data-row-id="' + node.id + '">' + insertLine + guides + elbow +
       '<div class="' + rowCls + '" style="' + rowStyle + '" data-act="select-node" data-id="' + node.id + '">' + chevron + thumb +
       '<div class="node-name-stack"><span class="node-name">' + esc(node.name) + '</span><span class="node-translation">' + thaiText + '</span></div>' +
-      '<span class="level-badge" style="background:' + colors.tintBg + ';color:' + colors.tintText + '">L' + node.level + '</span>' + childCount + reviewBadge +
+      '<span class="level-badge" style="background:' + colors.tintBg + ';color:' + colors.tintText + '">L' + node.level + '</span>' + childCount + reviewBadge + verifyCheck + noteBtn +
       '<div class="row-spacer"></div>' +
       '<div class="row-actions">' +
       '<button class="icon-btn" data-act="add-child" data-id="' + node.id + '" title="เพิ่มหมวดย่อย"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>' +
@@ -1442,15 +1501,18 @@
     if (node.id === state.dragOverId) cls += ' dragover';
     if (node.id === state.draggingId) cls += ' dragging';
     if (node.needsReview) cls += ' needs-review';
+    if (node.verified) cls += ' verified';
     var thumb = imageSrc(node) ? '<img class="thumb-img" src="' + esc(imageSrc(node)) + '" data-act="view-image" data-src="' + esc(imageSrc(node)) + '" title="คลิกเพื่อดูรูปเต็ม" />' : '<div class="thumb-fallback" style="background:' + colors.solid + '">' + siblingIndexOf(node) + '</div>';
     var thaiText = (node.translation && node.translation.trim()) ? esc(node.translation) : '<span style="opacity:.45;font-style:italic;">—</span>';
     var pill = node.childCount > 0 ? '<div class="mind-toggle-pill" data-act="toggle-collapse" data-id="' + node.id + '">' + node.childCount + '</div>' : '';
     var reviewBadge = node.needsReview ? '<span class="review-badge review-badge-float" title="รอการตรวจสอบ"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>' : '';
+    var verifyCheck = '<button class="mind-verify-check' + (node.verified ? ' checked' : '') + '" data-act="toggle-verify" data-id="' + node.id + '" title="' + (node.verified ? 'ตรวจสอบผ่านแล้ว (กดเพื่อยกเลิก)' : 'ติ๊กเมื่อหมวดนี้ตรวจสอบผ่านแล้ว') + '"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></button>';
+    var noteBtn = '<button class="mind-note-btn' + (node.note ? ' has-note' : '') + '" data-act="open-note" data-id="' + node.id + '" title="โน้ต"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v12H9l-5 5V4Z"/><path d="M8 9h8M8 13h5"/></svg></button>';
     return '<div class="' + cls + '"' + (state.moveModeActive ? ' draggable="true" data-drag-id="' + node.id + '"' : '') + ' data-card-id="' + node.id + '" data-act="select-node" data-id="' + node.id + '" style="left:' + node._px + 'px;top:' + (node._py - cardH / 2) + 'px;">' +
       '<span class="mind-level-tag" style="background:' + colors.tintBg + ';color:' + colors.tintText + '">L' + node.level + '</span>' +
-      reviewBadge +
+      reviewBadge + noteBtn +
       '<button class="mind-add-btn" data-act="add-child" data-id="' + node.id + '" title="เพิ่มหมวดย่อย"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>' +
-      thumb + '<div class="mind-text-stack"><span class="mind-en">' + esc(node.name) + '</span><span class="mind-th">' + thaiText + '</span></div>' +
+      verifyCheck + thumb + '<div class="mind-text-stack"><span class="mind-en">' + esc(node.name) + '</span><span class="mind-th">' + thaiText + '</span></div>' +
       pill + '</div>';
   }
   function renderMindView() {
@@ -1550,6 +1612,17 @@
     var flagged = !!node.needsReview;
     return '<div class="ctx-overlay" data-act="close-node-ctx"></div><div class="ctx-menu" style="left:' + state.nodeCtx.x + 'px;top:' + state.nodeCtx.y + 'px;">' +
       '<button class="ctx-item' + (flagged ? ' warn' : '') + '" data-act="toggle-review" data-id="' + node.id + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg>' + (flagged ? 'ยกเลิกเครื่องหมายรอตรวจสอบ' : 'ทำเครื่องหมายรอตรวจสอบ') + '</button></div>';
+  }
+  // Popover for a category's free-text note (see openNote/closeNote).
+  function renderNoteCtxMenu() {
+    if (!state.noteCtx) return '';
+    var node = nodesById.get(state.noteCtx.id);
+    if (!node) return '';
+    return '<div class="ctx-overlay" data-act="close-note-ctx"></div><div class="ctx-menu note-ctx-menu" style="left:' + state.noteCtx.x + 'px;top:' + state.noteCtx.y + 'px;">' +
+      '<div class="note-ctx-title">โน้ต: ' + esc(node.name) + '</div>' +
+      '<textarea class="note-ctx-textarea" data-note-id="' + node.id + '" placeholder="พิมพ์โน้ตสำหรับหมวดหมู่นี้ เช่น สิ่งที่ต้องแก้ไขจากห้องประชุม...">' + esc(node.note || '') + '</textarea>' +
+      '<div class="modal-actions"><button class="btn btn-primary small" data-act="close-note-ctx">เสร็จสิ้น</button></div>' +
+      '</div>';
   }
   // Background right-click menu -- its one item arms "move mode" (see
   // moveModeActive), which is the only time categories become draggable.
@@ -1724,7 +1797,7 @@
       (state.shareOpen ? '<div class="share-popover"><div class="share-title">แชร์ผังโครงสร้างนี้</div><div class="share-row"><input class="share-link-input" type="text" readonly value="' + esc(location.href) + '" /><button class="btn btn-primary small" data-act="copy-link">' + (state.copied ? 'คัดลอกแล้ว!' : 'คัดลอกลิงก์') + '</button></div><p class="share-hint">ทุกคนที่มีลิงก์นี้เข้าแก้ไขและเห็นการเปลี่ยนแปลงแบบเรียลไทม์ได้ (ไม่มีระบบล็อกอิน)</p></div>' : '') +
       '</div></div>' +
       '<div class="main">' + (state.viewMode === 'tree' ? renderTreeView() : renderMindView()) + renderPanel() + '</div>' +
-      renderSheetTabs() + renderSheetCtxMenu() + renderAnnoCtxMenu() + renderNodeCtxMenu() + renderMoveCtxMenu() + renderLightbox() + renderDeleteSheetModal() + renderDeleteNodeModal() + renderChatPanel() + renderLoadProgress() +
+      renderSheetTabs() + renderSheetCtxMenu() + renderAnnoCtxMenu() + renderNodeCtxMenu() + renderMoveCtxMenu() + renderNoteCtxMenu() + renderLightbox() + renderDeleteSheetModal() + renderDeleteNodeModal() + renderChatPanel() + renderLoadProgress() +
       (state.toast ? '<div class="toast">' + esc(state.toast) + '</div>' : '');
     app.innerHTML = html;
     var newScrollEl = app.querySelector('.tree-wrap, .mindmap-wrap');
@@ -1893,6 +1966,24 @@
     }
     var textId = e.target.getAttribute && e.target.getAttribute('data-text-id');
     if (textId) { var t = state.texts.find(function (x) { return x.id === textId; }); if (t) { t.content = e.target.innerHTML; clearTimeout(patchTimers[textId]); patchTimers[textId] = setTimeout(function () { api('PATCH', '/api/texts/' + textId, { content: t.content }).catch(function () {}); }, 500); } return; }
+    // No render() here -- rebuilding the DOM mid-keystroke would steal focus
+    // out of the note popover's textarea (the caret-jump bug this file
+    // already fixes once for the Definition field); the undo entry for the
+    // whole edit is pushed when the popover closes instead (see closeNote).
+    var noteId = e.target.getAttribute && e.target.getAttribute('data-note-id');
+    if (noteId) {
+      var noteNode = nodesById.get(noteId);
+      if (noteNode) {
+        noteNode.note = e.target.value;
+        var noteBtnEl = document.querySelector('.note-btn[data-id="' + noteId + '"], .mind-note-btn[data-id="' + noteId + '"]');
+        if (noteBtnEl) noteBtnEl.classList.toggle('has-note', !!noteNode.note);
+        clearTimeout(patchTimers['note-' + noteId]);
+        patchTimers['note-' + noteId] = setTimeout(function () {
+          api('PATCH', '/api/nodes/' + noteId, { note: noteNode.note }).catch(function () { showToast('บันทึกโน้ตไม่สำเร็จ'); });
+        }, 500);
+      }
+      return;
+    }
     if (e.target.getAttribute && e.target.getAttribute('data-act') === 'pencil-size') {
       state.pencilSize = Number(e.target.value);
       var pencilLabel = e.target.parentNode && e.target.parentNode.querySelector('.draw-size-label');
@@ -2094,6 +2185,13 @@
         }
         break;
       }
+      case 'toggle-verify': toggleVerified(id); break;
+      case 'open-note': {
+        var noteRect = el.getBoundingClientRect();
+        openNote(id, noteRect.left, noteRect.bottom + 6);
+        break;
+      }
+      case 'close-note-ctx': closeNote(); break;
       case 'view-image': state.lightboxSrc = el.getAttribute('data-src'); render(); break;
       case 'close-lightbox': state.lightboxSrc = null; render(); break;
       case 'anno-delete':
@@ -2128,6 +2226,7 @@
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && state.lightboxSrc) { state.lightboxSrc = null; render(); }
     if (e.key === 'Escape' && state.deleteNodeConfirmId) { state.deleteNodeConfirmId = null; render(); }
+    if (e.key === 'Escape' && state.noteCtx) { closeNote(); }
     if (e.key === 'Escape' && state.moveCtx) { state.moveCtx = null; render(); }
     if (e.key === 'Escape' && state.moveModeActive) { state.moveModeActive = false; render(); }
     var isCtrl = e.ctrlKey || e.metaKey;

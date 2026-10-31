@@ -87,13 +87,13 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
     // later (the duplicate silently exists, just invisible to the client that
     // asked for it -- a prior version of this endpoint hit exactly that).
     if (nodesRes.rows.length) {
-      const cols = 12;
+      const cols = 14;
       const values = [];
       const placeholders = nodesRes.rows.map((n, i) => {
         values.push(
           idMap.get(n.id), newSheetId, n.parent_id ? idMap.get(n.parent_id) : null,
           n.name, n.translation, n.definition, newImageUrls.get(n.id) || null,
-          n.definition_color, n.needs_review, n.level, n.sort_order, n.collapsed
+          n.definition_color, n.needs_review, n.verified, n.note, n.level, n.sort_order, n.collapsed
         );
         const base = i * cols;
         const ph = [];
@@ -101,7 +101,7 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
         return '(' + ph.join(',') + ')';
       });
       await client.query(
-        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, level, sort_order, collapsed)
+        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, verified, note, level, sort_order, collapsed)
          VALUES ${placeholders.join(',')}`,
         values
       );
@@ -150,7 +150,7 @@ router.post('/sheets/:id/duplicate', async (req, res) => {
 // to carry through to a restore.
 router.get('/sheets/:id/full', async (req, res) => {
   const nodesRes = await pool.query(
-    'SELECT id, parent_id AS "parentId", name, translation, definition, image_url AS "imageUrl", definition_color AS "definitionColor", needs_review AS "needsReview", level, sort_order AS "sortOrder", collapsed FROM nodes WHERE sheet_id = $1',
+    'SELECT id, parent_id AS "parentId", name, translation, definition, image_url AS "imageUrl", definition_color AS "definitionColor", needs_review AS "needsReview", verified, note, level, sort_order AS "sortOrder", collapsed FROM nodes WHERE sheet_id = $1',
     [req.params.id]
   );
   const drawingsRes = await pool.query('SELECT id, color, size, points FROM drawings WHERE sheet_id = $1', [req.params.id]);
@@ -180,9 +180,9 @@ router.post('/sheets/restore', async (req, res) => {
     );
     for (const n of (nodes || [])) {
       await client.query(
-        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, level, sort_order, collapsed)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT (id) DO NOTHING`,
-        [n.id, sheetId, n.parentId || null, n.name || '', n.translation || '', n.definition || '', n.imageUrl || null, n.definitionColor || null, !!n.needsReview, n.level || 1, n.sortOrder || 0, !!n.collapsed]
+        `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, verified, note, level, sort_order, collapsed)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT (id) DO NOTHING`,
+        [n.id, sheetId, n.parentId || null, n.name || '', n.translation || '', n.definition || '', n.imageUrl || null, n.definitionColor || null, !!n.needsReview, !!n.verified, n.note || '', n.level || 1, n.sortOrder || 0, !!n.collapsed]
       );
     }
     for (const d of (drawings || [])) {

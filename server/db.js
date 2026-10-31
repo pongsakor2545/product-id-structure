@@ -76,6 +76,11 @@ async function migrate() {
   await pool.query(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS definition_color TEXT;`);
   await pool.query(`ALTER TABLE sheets ADD COLUMN IF NOT EXISTS color TEXT;`);
   await pool.query(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS needs_review BOOLEAN NOT NULL DEFAULT FALSE;`);
+  // "Checked off" review mode (separate from needs_review, which flags a
+  // category as needing attention -- this instead marks one as already
+  // verified/approved) plus a free-text note per category for meeting notes.
+  await pool.query(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT FALSE;`);
+  await pool.query(`ALTER TABLE nodes ADD COLUMN IF NOT EXISTS note TEXT NOT NULL DEFAULT '';`);
 
   // Powers the "find which category this belongs in" search: trigram
   // indexes let a query match close-but-not-exact wording (typos, slightly

@@ -12,11 +12,12 @@ function id() { return crypto.randomUUID(); }
 const LIST_SELECT = `
   SELECT n.id, n.name, n.translation, n.definition, n.level, n.collapsed, n.sort_order AS "sortOrder",
     n.image_url AS "imageUrl", n.definition_color AS "definitionColor", n.needs_review AS "needsReview",
+    n.verified, n.note,
     COUNT(c.id)::int AS "childCount"
   FROM nodes n
   LEFT JOIN nodes c ON c.parent_id = n.id
 `;
-const LIST_GROUP_ORDER = 'GROUP BY n.id, n.name, n.translation, n.definition, n.level, n.collapsed, n.image_url, n.definition_color, n.needs_review, n.sort_order ORDER BY n.sort_order ASC';
+const LIST_GROUP_ORDER = 'GROUP BY n.id, n.name, n.translation, n.definition, n.level, n.collapsed, n.image_url, n.definition_color, n.needs_review, n.verified, n.note, n.sort_order ORDER BY n.sort_order ASC';
 
 router.get('/sheets/:sheetId/nodes', async (req, res) => {
   const isRoot = !req.query.parent || req.query.parent === 'root';
@@ -31,12 +32,12 @@ router.get('/sheets/:sheetId/nodes', async (req, res) => {
 
 router.get('/nodes/:id', async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT n.id, n.sheet_id AS "sheetId", n.parent_id AS "parentId", n.name, n.translation, n.definition, n.image_url AS "imageUrl", n.definition_color AS "definitionColor", n.needs_review AS "needsReview", n.level, n.collapsed,
+    `SELECT n.id, n.sheet_id AS "sheetId", n.parent_id AS "parentId", n.name, n.translation, n.definition, n.image_url AS "imageUrl", n.definition_color AS "definitionColor", n.needs_review AS "needsReview", n.verified, n.note, n.level, n.collapsed,
       COUNT(c.id)::int AS "childCount"
      FROM nodes n
      LEFT JOIN nodes c ON c.parent_id = n.id
      WHERE n.id = $1
-     GROUP BY n.id, n.sheet_id, n.parent_id, n.name, n.translation, n.definition, n.image_url, n.definition_color, n.needs_review, n.level, n.collapsed`,
+     GROUP BY n.id, n.sheet_id, n.parent_id, n.name, n.translation, n.definition, n.image_url, n.definition_color, n.needs_review, n.verified, n.note, n.level, n.collapsed`,
     [req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'not_found' });
@@ -123,7 +124,7 @@ router.post('/sheets/:sheetId/nodes', async (req, res) => {
   const node = {
     id: id(), sheetId: req.params.sheetId, parentId: parentId || null,
     name: (name || 'New Category').trim(), translation: '', definition: '', level,
-    collapsed: false, sortOrder: ord.rows[0].next, imageUrl: null, needsReview: false, childCount: 0
+    collapsed: false, sortOrder: ord.rows[0].next, imageUrl: null, needsReview: false, verified: false, note: '', childCount: 0
   };
   await pool.query(
     `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, level, sort_order)
@@ -138,7 +139,7 @@ router.patch('/nodes/:id', async (req, res) => {
   const found = await pool.query('SELECT sheet_id, image_url FROM nodes WHERE id = $1', [req.params.id]);
   if (!found.rows[0]) return res.status(404).json({ error: 'not_found' });
 
-  const allowed = ['name', 'translation', 'definition', 'image', 'collapsed', 'definitionColor', 'needsReview'];
+  const allowed = ['name', 'translation', 'definition', 'image', 'collapsed', 'definitionColor', 'needsReview', 'verified', 'note'];
   const columnFor = { definitionColor: 'definition_color', needsReview: 'needs_review' };
   const sets = [];
   const params = [];
@@ -267,7 +268,7 @@ router.post('/nodes/:id/move', async (req, res) => {
 // bring back a just-deleted category+subtree without any id remapping, so
 // redoing the delete afterward can target the exact same id again).
 router.post('/sheets/:sheetId/nodes/restore', async (req, res) => {
-  const { id: nodeId, parentId, name, translation, definition, imageUrl, definitionColor, needsReview, level, collapsed, sortOrder } = req.body;
+  const { id: nodeId, parentId, name, translation, definition, imageUrl, definitionColor, needsReview, verified, note, level, collapsed, sortOrder } = req.body;
   if (!nodeId) return res.status(400).json({ error: 'id_required' });
   // Reusing the node's original sort_order (rather than always appending at
   // the end) is what puts it back at its original position among its
@@ -284,15 +285,16 @@ router.post('/sheets/:sheetId/nodes/restore', async (req, res) => {
     finalSortOrder = ord.rows[0].next;
   }
   await pool.query(
-    `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, level, sort_order, collapsed)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    `INSERT INTO nodes (id, sheet_id, parent_id, name, translation, definition, image_url, definition_color, needs_review, verified, note, level, sort_order, collapsed)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
      ON CONFLICT (id) DO NOTHING`,
-    [nodeId, req.params.sheetId, parentId || null, name || '', translation || '', definition || '', imageUrl || null, definitionColor || null, !!needsReview, level || 1, finalSortOrder, !!collapsed]
+    [nodeId, req.params.sheetId, parentId || null, name || '', translation || '', definition || '', imageUrl || null, definitionColor || null, !!needsReview, !!verified, note || '', level || 1, finalSortOrder, !!collapsed]
   );
   const node = {
     id: nodeId, sheetId: req.params.sheetId, parentId: parentId || null,
     name: name || '', translation: translation || '', definition: definition || '',
     imageUrl: imageUrl || null, definitionColor: definitionColor || null, needsReview: !!needsReview,
+    verified: !!verified, note: note || '',
     level: level || 1, collapsed: !!collapsed, sortOrder: finalSortOrder, childCount: 0
   };
   ws.broadcast(req.params.sheetId, { senderClientId: req.get('X-Client-Id') || null, type: 'node:created', parentId: node.parentId, node });
