@@ -480,7 +480,22 @@
     node.parentId = parentId || null;
     if (parentId) {
       var parent = nodesById.get(parentId);
-      if (parent) { parent.childCount = (parent.childCount || 0) + 1; if (parent.childrenLoaded) parent.childrenIds.push(id); parent.collapsed = false; }
+      if (parent) {
+        // If the parent had no children at all before this one, we now know
+        // its complete child list with certainty -- mark it loaded directly
+        // instead of leaving the next render to discover it via a fetch.
+        // That fetch (triggered because childrenLoaded is still false) can
+        // race ahead of the move/create request that's attaching this very
+        // child on the server, come back empty, and permanently mark the
+        // parent "loaded" with nothing in it -- which is exactly what made a
+        // freshly-dragged child vanish instead of showing up under its new
+        // parent.
+        var hadNoChildren = !parent.childrenLoaded && (parent.childCount || 0) === 0;
+        parent.childCount = (parent.childCount || 0) + 1;
+        if (parent.childrenLoaded) parent.childrenIds.push(id);
+        else if (hadNoChildren) { parent.childrenLoaded = true; parent.childrenIds = [id]; }
+        parent.collapsed = false;
+      }
     } else {
       if (state.rootIds.indexOf(id) === -1) state.rootIds.push(id);
     }
