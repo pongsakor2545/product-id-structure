@@ -173,8 +173,6 @@
   .move-mode-badge { background: var(--danger); border-color: var(--danger); color: white; }
   .move-mode-badge:hover { filter: brightness(0.92); }
   .move-mode-banner { position: sticky; top: 10px; left: 50%; transform: translateX(-50%); width: max-content; background: var(--primary); color: white; padding: 8px 16px; border-radius: 999px; font-size: 12.5px; font-weight: 500; z-index: 20; box-shadow: var(--shadow-md); pointer-events: none; white-space: nowrap; }
-  .root-drop-zone { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--primary); background: var(--primary-tint); border: 2px dashed var(--primary); border-radius: 10px; padding: 14px; margin-bottom: 18px; }
-  .root-drop-zone.dragover { background: var(--success-tint); border-color: var(--success-line); color: var(--success-line); }
   .topbar-center { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-self: center; min-width: 0; }
   .legend { display: flex; gap: 8px; flex-wrap: wrap; }
   .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-faint); background: var(--surface); border: 1.5px solid var(--border); border-radius: 999px; padding: 5px 12px 5px 9px; cursor: pointer; transition: opacity .12s ease, border-color .12s ease; opacity: 0.55; }
@@ -918,28 +916,29 @@
     if (!draggingId || draggingId === targetId) { render(); return; }
     var node = nodesById.get(draggingId);
     if (!node) { render(); return; }
+    if (!targetId) { render(); return; }
+    var target = nodesById.get(targetId);
+    if (!target) { render(); return; }
+    var n = target;
+    while (n) { if (n.id === draggingId) { render(); return; } n = n.parentId ? nodesById.get(n.parentId) : null; }
     var targetParentId, insertBeforeId = null;
-    if (targetId) {
-      var target = nodesById.get(targetId);
-      if (!target) { render(); return; }
-      var n = target;
-      while (n) { if (n.id === draggingId) { render(); return; } n = n.parentId ? nodesById.get(n.parentId) : null; }
-      if (mode === 'before' || mode === 'after') {
-        targetParentId = target.parentId || null;
-        var siblings = targetParentId ? (nodesById.get(targetParentId) || {}).childrenIds || [] : state.rootIds;
-        if (mode === 'before') {
-          insertBeforeId = targetId;
-        } else {
-          var tIdx = siblings.indexOf(targetId);
-          var nextId = (tIdx !== -1 && tIdx + 1 < siblings.length) ? siblings[tIdx + 1] : null;
-          insertBeforeId = (nextId && nextId !== draggingId) ? nextId : null;
-        }
+    if (mode === 'before' || mode === 'after') {
+      // Dropping near a root (Level 1) card's top/bottom edge still makes
+      // the dragged branch a root-level sibling (targetParentId ends up
+      // null, same as the card itself) -- that's what lets a branch move
+      // back up to the top level without a separate "drop here for root"
+      // target to explain.
+      targetParentId = target.parentId || null;
+      var siblings = targetParentId ? (nodesById.get(targetParentId) || {}).childrenIds || [] : state.rootIds;
+      if (mode === 'before') {
+        insertBeforeId = targetId;
       } else {
-        targetParentId = target.id;
+        var tIdx = siblings.indexOf(targetId);
+        var nextId = (tIdx !== -1 && tIdx + 1 < siblings.length) ? siblings[tIdx + 1] : null;
+        insertBeforeId = (nextId && nextId !== draggingId) ? nextId : null;
       }
     } else {
-      targetParentId = null; // root drop zone
-      if (!node.parentId) { render(); return; }
+      targetParentId = target.id;
     }
     var oldParentId = node.parentId;
     moveNodeTo(draggingId, targetParentId, { insertBeforeId: insertBeforeId });
@@ -1458,15 +1457,10 @@
     var tip = state.moveModeActive
       ? '<div class="tree-tip move-mode-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 9l-4 3 4 3M9 5l3-4 3 4M15 19l-3 4-3-4M19 9l4 3-4 3M2 12h20M12 2v20"/></svg>โหมดย้ายตำแหน่ง: ลากกล่องไปวางตรงกลางการ์ดอื่นเพื่อย้ายเข้าไปเป็นหมวดย่อย หรือวางใกล้ขอบบน/ล่างเพื่อแทรกที่ระดับเดียวกับการ์ดนั้น ลากได้เรื่อยๆ จนกว่าจะกดปิดที่ป้าย "โหมดย้ายตำแหน่ง" มุมซ้ายบน</div>'
       : '<div class="tree-tip"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>ทุกหมวดแสดงหมวดย่อยตลอดเวลา ใช้ปุ่ม Level ด้านบนเพื่อซ่อนบางระดับ · คลิกขวาที่พื้นหลังเพื่อเปิดโหมดย้ายตำแหน่ง</div>';
-    // While a category is being dragged, show a standing drop target for
-    // "send it back to top level" -- otherwise dropping is only possible
-    // onto another card, which always nests it deeper, with no way to drag
-    // it back out to root.
-    // Shown for the whole of move mode (not just mid-drag) so the DOM never
-    // has to be rebuilt during a drag just to make it appear.
-    var rootZoneHtml = state.moveModeActive ?
-      '<div class="root-drop-zone' + (state.dragOverId === 'root' ? ' dragover' : '') + '" data-root-drop="1"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>ปล่อยที่นี่เพื่อย้ายกลับไปเป็นหมวดหมู่หลัก (ระดับบนสุด)</div>' : '';
-    return '<div class="tree-wrap">' + tip + rootZoneHtml + '<div class="tree">' + rows.map(renderTreeRow).join('') + '</div></div>';
+    // Dropping near a root (Level 1) card's top/bottom edge already moves a
+    // branch back to the top level (see handleDrop), so there's no separate
+    // "drop here for root" banner to explain -- one less thing on screen.
+    return '<div class="tree-wrap">' + tip + '<div class="tree">' + rows.map(renderTreeRow).join('') + '</div></div>';
   }
 
   function computeMindLayout(rootIds) {
@@ -1926,11 +1920,6 @@
   function clearDragHint() { if (dragHintUndo) { dragHintUndo(); dragHintUndo = null; } }
   function applyDragHint(id, mode) {
     clearDragHint();
-    if (id === 'root') {
-      var zone = app.querySelector('.root-drop-zone');
-      if (zone) { zone.classList.add('dragover'); dragHintUndo = function () { zone.classList.remove('dragover'); }; }
-      return;
-    }
     var row = app.querySelector('.row-wrap[data-drag-id="' + id + '"]');
     if (row) {
       if (mode === 'child') {
@@ -1955,12 +1944,6 @@
       if (state.dragOverSheetId !== sid) { state.dragOverSheetId = sid; render(); }
       return;
     }
-    var rootZone = e.target.closest('[data-root-drop]');
-    if (rootZone && state.draggingId) {
-      e.preventDefault();
-      if (state.dragOverId !== 'root') { state.dragOverId = 'root'; state.dragOverMode = null; applyDragHint('root', null); }
-      return;
-    }
     var el = e.target.closest('[data-drag-id]'); if (!el) return;
     e.preventDefault();
     var id = el.getAttribute('data-drag-id');
@@ -1976,8 +1959,6 @@
   app.addEventListener('drop', function (e) {
     var sheetEl = e.target.closest('[data-sheet-drag-id]');
     if (sheetEl && state.draggingSheetId) { e.preventDefault(); handleSheetDrop(sheetEl.getAttribute('data-sheet-drag-id')); return; }
-    var rootZone = e.target.closest('[data-root-drop]');
-    if (rootZone && state.draggingId) { e.preventDefault(); handleDrop(null, null); return; }
     var el = e.target.closest('[data-drag-id]'); if (!el) return;
     e.preventDefault(); handleDrop(el.getAttribute('data-drag-id'), state.dragOverMode);
   });
